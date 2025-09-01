@@ -20,7 +20,7 @@ dbg:EnableTopic("Events", true)
 dbg:EnableTopic("Flow", true)
 
 -- ******************************** Variables *******************************
-TitanBgGeneralSaved = {}
+TitanBgGeneralSaved = TitanBgGeneralSaved or {}
 
 -- Titan Panel registration
 local function OnLoad(self)
@@ -81,13 +81,37 @@ local function ToggleBgGeneralScreen()
 
     -- Create window
     local frame = CreateFrame("Frame", "BgGeneralWindow", UIParent, "BackdropTemplate")
-    frame:SetSize(500, 500)
-    frame:SetPoint("CENTER")
+    frame:SetSize(300, 300)
+
+    print("TitanBgGeneralSaved:", TitanBgGeneralSaved.point, TitanBgGeneralSaved.relativePoint, TitanBgGeneralSaved.xOfs, TitanBgGeneralSaved.yOfs)
+
+    -- Re-open at last position
+    if TitanBgGeneralSaved.point then
+        frame:SetPoint(TitanBgGeneralSaved.point, UIParent, TitanBgGeneralSaved.relativePoint, TitanBgGeneralSaved.xOfs, TitanBgGeneralSaved.yOfs)
+        dbg:Out("Flow", "Restored BgGeneralWindow position to " .. tostring(TitanBgGeneralSaved.point) .. ", " .. tostring(TitanBgGeneralSaved.relativePoint) .. ", " .. tostring(TitanBgGeneralSaved.xOfs) .. ", " .. tostring(TitanBgGeneralSaved.yOfs))
+    else
+        frame:SetPoint("CENTER")
+        dbg:Out("Flow", "Set BgGeneralWindow position to CENTER (default)")
+    end
+
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", frame.StartMoving)
-    frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+    
+    frame:SetScript("OnDragStart", function(self)
+        self:ClearAllPoints()
+        self:StartMoving()
+    end)
+        
+    frame:SetScript("OnDragStop", function(self)
+        frame:StopMovingOrSizing()
+        local point, _, relativePoint, xOfs, yOfs = frame:GetPoint()
+        TitanBgGeneralSaved.point = point
+        TitanBgGeneralSaved.relativePoint = relativePoint
+        TitanBgGeneralSaved.xOfs = xOfs
+        TitanBgGeneralSaved.yOfs = yOfs
+        dbg:Out("Flow", "Saved BgGeneralWindow position to " .. tostring(point) .. ", " .. tostring(relativePoint) .. ", " .. tostring(xOfs) .. ", " .. tostring(yOfs))
+    end)
     frame:SetBackdrop({
         bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
@@ -96,20 +120,18 @@ local function ToggleBgGeneralScreen()
     })
     frame:SetBackdropColor(0, 0, 0, 1)
 
-    -- Code start here
-
     -- 1) map node → icon texture
     local nodeIcons = {
-        ["Stables"] = "Interface\\Icons\\Garrison_Building_Stables",
+        ["Stables"] = "Interface\\Icons\\Ability_Mount_RidingHorse",
         ["Gold Mine"] = "Interface\\Icons\\trade_mining",
-        ["Blacksmith"] = "Interface\\Icons\\UI-ChatIcon-CallOfDutyMWicon",
-        ["Lumber Mill"] = "Interface\\Icons\\INV_Misc_WoodLog_01",
-        ["Farm"] = "Interface\\Icons\\INV_Farming_Flour"
+        ["Blacksmith"] = "Interface\\Icons\\Trade_BlackSmithing",
+        ["Lumber Mill"] = "Interface\\Icons\\INV_Crate_05",
+        ["Farm"] = "Interface\\Icons\\INV_Misc_Food_Wheat_01"
     }
 
     -- 2) grid settings (6×6)
     local cols, rows = 6, 6
-    local size = 10      -- square button size
+    local size = 16      -- square button size
     local hGap, vGap = 5, 5    -- spacing
     local pad = 10      -- padding around the grid
 
@@ -135,8 +157,13 @@ local function ToggleBgGeneralScreen()
     for col = 1, cols do
         for row = 1, rows do
             local idx = (row - 1) * cols + col
-            local node = select(col, "Stables", "Gold Mine", "Blacksmith", "Lumber Mill", "Farm")
+            local nodeName = select(col, "Stables", "Gold Mine", "Blacksmith", "Lumber Mill", "Farm")
             local btn = CreateFrame("Button", "BgGenIconBtn" .. idx, frame)
+            local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            label:SetPoint("CENTER", btn, "BOTTOMRIGHT", 0, 0)
+            label:SetText(tostring(row)) -- or any label you want
+            btn.label = label
+
             local xOff = pad + (col - 1) * (size + hGap)
             local yOff = -pad - (row - 1) * (size + vGap)
 
@@ -146,7 +173,7 @@ local function ToggleBgGeneralScreen()
             -- icon texture
             local tex = btn:CreateTexture(nil, "ARTWORK")
             tex:SetAllPoints(btn)
-            tex:SetTexture(nodeIcons[node])
+            tex:SetTexture(nodeIcons[nodeName])
 
             -- border on hover
             btn:SetScript("OnEnter", function(self)
@@ -154,7 +181,7 @@ local function ToggleBgGeneralScreen()
                 self.highlight:SetAllPoints()
                 self.highlight:SetColorTexture(1, 1, 1, 0.25)
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:AddLine(row .. " inc " .. node, 1, 1, 1)
+                GameTooltip:AddLine(row .. " inc " .. nodeName, 1, 1, 1)
                 GameTooltip:Show()
             end)
             btn:SetScript("OnLeave", function(self)
@@ -166,7 +193,7 @@ local function ToggleBgGeneralScreen()
 
             -- send the callout when clicked
             btn:SetScript("OnClick", function()
-                SendChatMessage(row .. " inc " .. node, GetChatType())
+                SendChatMessage(row .. " inc " .. nodeName, GetChatType())
             end)
         end
     end
@@ -200,7 +227,7 @@ local function BgGeneralTexturePicker()
         insets = { left = 8, right = 8, top = 8, bottom = 8 },
     })
     frame:SetBackdropColor(0, 0, 0, 1)
-    
+
     -- scroll frame with all icon textures in the game
     local scrollFrame = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -10)
@@ -211,7 +238,7 @@ local function BgGeneralTexturePicker()
     local iconSize = 32
     local iconsPerRow = 10
     local iconCount = 0
-    
+
     for i = 1, GetNumSpellTabs() do
         local tabName, texture, offset, numSpells = GetSpellTabInfo(i)
         for j = 1, numSpells do
@@ -259,7 +286,7 @@ local function OnClick(self, button)
     if (button == "LeftButton") then
         ToggleBgGeneralScreen()
     elseif (button == "RightButton") then
-        BgGeneralTexturePicker()        
+        BgGeneralTexturePicker()
     end
 end
 
@@ -278,7 +305,7 @@ local function CreateTitanButton()
     window:SetScript("OnShow", function(self)
         TitanPanelButton_OnShow(self);
     end)
-    
+
     window:SetScript("OnClick", function(self, button)
         OnClick(self, button);
         TitanPanelButton_OnClick(self, button);
