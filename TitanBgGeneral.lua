@@ -22,6 +22,39 @@ dbg:EnableTopic("Flow", true)
 -- ******************************** Variables *******************************
 TitanBgGeneralSaved = TitanBgGeneralSaved or {}
 
+local nodeIcons = {
+    ["Stables"] = "Interface\\Icons\\Ability_Mount_RidingHorse",
+    ["Gold Mine"] = "Interface\\Icons\\trade_mining",
+    ["Blacksmith"] = "Interface\\Icons\\Trade_BlackSmithing",
+    ["Lumber Mill"] = "Interface\\Icons\\INV_Crate_05",
+    ["Farm"] = "Interface\\Icons\\INV_Misc_Food_Wheat_01"
+}
+
+local actions = {
+    "INC", -- Incoming attack
+    "DEF", -- Defend
+    "HELP", -- Need help
+    "SAFE", -- Safe/All clear
+    "LOST", -- Node lost
+    "CAP", -- Capture node
+    "RETREAT", -- Retreat
+    "GY", -- Graveyard callout
+    "STACK", -- Stack here
+    "SPREAD", -- Spread out
+    "GROUP", -- Group up
+    "RUSH", -- Rush target
+    "SPLIT", -- Split push
+    "CC" -- Crowd control needed
+}
+
+local nodeAbbrToName = {
+    ST = "Stables",
+    GM = "Gold Mine",
+    BS = "Blacksmith",
+    LM = "Lumber Mill",
+    FM = "Farm"
+}
+
 -- Titan Panel registration
 local function OnLoad(self)
     self.registry = {
@@ -51,17 +84,25 @@ local function OnLoad(self)
     }
 end
 
+local function GetChatType()
+    local inInstance, instanceType = IsInInstance()
+    if inInstance and instanceType == "pvp" then
+        return "INSTANCE_CHAT"
+    elseif IsInRaid() then
+        return "RAID"
+    elseif IsInGroup() then
+        return "PARTY"
+    else
+        return "SAY"
+    end
+end
+
 -- ******************************** GetTooltipText *******************************
 -- Function to generate the tooltip text when hovering over the button
 -- This function will be called by Titan Panel to display detailed information.
 function GetTooltipText()
     return "Battleground General Addon\nTracks your battleground stats and performance."
 end
-
---[[ 
-   BgGeneral: A tiny movable window with one‐click callouts 
-   slash: /bgcomm 
---]]
 
 -- Toggle the main frame
 local function ToggleBgGeneralScreen()
@@ -78,12 +119,30 @@ local function ToggleBgGeneralScreen()
         _G["BgGeneralWindow"] = nil
         return
     end
+    
+    local tooltipTimer
+    local cols, rows = 5, 6
+    local size = 22         -- square button size
+    local hGap, vGap = 5, 5 -- spacing
+    local pad = 10          -- padding around the grid
 
+    local cellActions = {}
+    
+    for row = 1, rows do
+        cellActions[row] = {}
+        for col = 1, cols do
+            cellActions[row][col] = 
+            {
+                default = "INC",
+                shift = "DEF with",
+                ctrl = "HELP with",
+                alt = "SAFE"
+            }
+        end
+    end    
     -- Create window
     local frame = CreateFrame("Frame", "BgGeneralWindow", UIParent, "BackdropTemplate")
     frame:SetSize(300, 300)
-
-    print("TitanBgGeneralSaved:", TitanBgGeneralSaved.point, TitanBgGeneralSaved.relativePoint, TitanBgGeneralSaved.xOfs, TitanBgGeneralSaved.yOfs)
 
     -- Re-open at last position
     if TitanBgGeneralSaved.point then
@@ -110,8 +169,8 @@ local function ToggleBgGeneralScreen()
         TitanBgGeneralSaved.relativePoint = relativePoint
         TitanBgGeneralSaved.xOfs = xOfs
         TitanBgGeneralSaved.yOfs = yOfs
-        dbg:Out("Flow", "Saved BgGeneralWindow position to " .. tostring(point) .. ", " .. tostring(relativePoint) .. ", " .. tostring(xOfs) .. ", " .. tostring(yOfs))
     end)
+    
     frame:SetBackdrop({
         bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
@@ -120,163 +179,67 @@ local function ToggleBgGeneralScreen()
     })
     frame:SetBackdropColor(0, 0, 0, 1)
 
-    -- 1) map node → icon texture
-    local nodeIcons = {
-        ["Stables"] = "Interface\\Icons\\Ability_Mount_RidingHorse",
-        ["Gold Mine"] = "Interface\\Icons\\trade_mining",
-        ["Blacksmith"] = "Interface\\Icons\\Trade_BlackSmithing",
-        ["Lumber Mill"] = "Interface\\Icons\\INV_Crate_05",
-        ["Farm"] = "Interface\\Icons\\INV_Misc_Food_Wheat_01"
-    }
-
-    -- 2) grid settings (6×6)
-    local cols, rows = 6, 6
-    local size = 16      -- square button size
-    local hGap, vGap = 5, 5    -- spacing
-    local pad = 10      -- padding around the grid
-
     -- compute & apply window size
     local totalW = pad * 2 + cols * size + (cols - 1) * hGap
     local totalH = pad * 2 + rows * size + (rows - 1) * vGap
     frame:SetSize(totalW, totalH)
 
-    -- convenience to pick BG chat
-    local function GetChatType()
-        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-            return "INSTANCE_CHAT"
-        elseif IsInRaid() then
-            return "RAID"
-        elseif IsInGroup() then
-            return "PARTY"
-        else
-            return "SAY"
-        end
-    end
-
-    -- 3) build 6×6 icon buttons
     for col = 1, cols do
         for row = 1, rows do
             local idx = (row - 1) * cols + col
-            local nodeName = select(col, "Stables", "Gold Mine", "Blacksmith", "Lumber Mill", "Farm")
+            local abbr = select(col, "ST", "GM", "BS", "LM", "FM")
+            local fullName = nodeAbbrToName[abbr]
             local btn = CreateFrame("Button", "BgGenIconBtn" .. idx, frame)
-            local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            label:SetPoint("CENTER", btn, "BOTTOMRIGHT", 0, 0)
-            label:SetText(tostring(row)) -- or any label you want
-            btn.label = label
-
-            local xOff = pad + (col - 1) * (size + hGap)
-            local yOff = -pad - (row - 1) * (size + vGap)
-
             btn:SetSize(size, size)
-            btn:SetPoint("TOPLEFT", frame, "TOPLEFT", xOff, yOff)
+            btn:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + (col - 1) * (size + hGap), -pad - (row - 1) * (size + vGap))
 
-            -- icon texture
-            local tex = btn:CreateTexture(nil, "ARTWORK")
-            tex:SetAllPoints(btn)
-            tex:SetTexture(nodeIcons[nodeName])
+            -- Add icon (always visible)
+            local iconTex = nodeIcons[fullName]
+            if iconTex then
+                local icon = btn:CreateTexture(nil, "BACKGROUND")
+                icon:SetTexture(iconTex)
+                icon:SetAllPoints(btn)
+                icon:SetAlpha(0.75)
+            end
 
-            -- border on hover
+            -- Add label
+            local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalTiny")
+            label:SetText(abbr or "")
+            label:SetPoint("CENTER", btn, "CENTER")
+            label:SetWidth(size)
+
+            -- Tooltip scripts
             btn:SetScript("OnEnter", function(self)
-                self.highlight = self.highlight or self:CreateTexture(nil, "HIGHLIGHT")
-                self.highlight:SetAllPoints()
-                self.highlight:SetColorTexture(1, 1, 1, 0.25)
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:AddLine(row .. " inc " .. nodeName, 1, 1, 1)
+                GameTooltip:SetOwner(UIParent, "ANCHOR_BOTTOMRIGHT")
+                -- Determine tooltip text based on actions
+                GameTooltip:SetText("|cff00ff00(Click)|r |cffffffff" .. cellActions[row][col].default .. " " .. row .. " or more\n" ..
+                                    "|cff00ff00(Shift+Click)|r |cffffffff" ..cellActions[row][col].shift .. " ".. row .. " or more\n" ..
+                                    "|cff00ff00(Ctrl+Click)|r |cffffffff" ..cellActions[row][col].ctrl .. " ".. row .. " or more\n" ..
+                                    "|cff00ff00(Alt+Click)|r |cffffffff" ..cellActions[row][col].alt .. "\n")
                 GameTooltip:Show()
-            end)
+            end)     
             btn:SetScript("OnLeave", function(self)
-                if self.highlight then
-                    self.highlight:Hide()
-                end
                 GameTooltip:Hide()
             end)
 
-            -- send the callout when clicked
             btn:SetScript("OnClick", function()
-                SendChatMessage(row .. " inc " .. nodeName, GetChatType())
+                local action
+                if IsShiftKeyDown() then
+                    action = cellActions[row][col].shift
+                elseif IsControlKeyDown() then
+                    action = cellActions[row][col].ctrl
+                elseif IsAltKeyDown() then
+                    action = cellActions[row][col].alt
+                else
+                    action = cellActions[row][col].default
+                end
+                SendChatMessage(row .. " " .. action .. " " .. fullName, GetChatType())
             end)
         end
     end
 
     -- register the frame so Toggle can hide it
     _G["BgGeneralWindow"] = frame
-end
-
--- Toggle the main frame
-local function BgGeneralTexturePicker()
-    -- Hide if already shown
-    if _G["BgGeneralTexturePicker"] then
-        _G["BgGeneralTexturePicker"]:Hide()
-        _G["BgGeneralTexturePicker"] = nil
-        return
-    end
-
-    -- Create window
-    local frame = CreateFrame("Frame", "BgGeneralTexturePicker", UIParent, "BackdropTemplate")
-    frame:SetSize(400, 300)
-    frame:SetPoint("CENTER")
-    frame:SetMovable(true)
-    frame:EnableMouse(true)
-    frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", frame.StartMoving)
-    frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-    frame:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-        tile = true, tileSize = 32, edgeSize = 32,
-        insets = { left = 8, right = 8, top = 8, bottom = 8 },
-    })
-    frame:SetBackdropColor(0, 0, 0, 1)
-
-    -- scroll frame with all icon textures in the game
-    local scrollFrame = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -10)
-    scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 10)
-    local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(360, 1000) -- arbitrary height, will be adjusted
-    scrollFrame:SetScrollChild(content)
-    local iconSize = 32
-    local iconsPerRow = 10
-    local iconCount = 0
-
-    for i = 1, GetNumSpellTabs() do
-        local tabName, texture, offset, numSpells = GetSpellTabInfo(i)
-        for j = 1, numSpells do
-            local spellIndex = offset + j
-            local spellName, rank, icon = GetSpellInfo(spellIndex)
-            if icon then
-                iconCount = iconCount + 1
-                local btn = CreateFrame("Button", nil, content)
-                btn:SetSize(iconSize, iconSize)
-                local col = (iconCount - 1) % iconsPerRow
-                local row = math.floor((iconCount - 1) / iconsPerRow)
-                btn:SetPoint("TOPLEFT", content, "TOPLEFT", col * (iconSize + 5), -row * (iconSize + 5))
-                local tex = btn:CreateTexture(nil, "ARTWORK")
-                tex:SetAllPoints(btn)
-                tex:SetTexture(icon)
-                btn:SetScript("OnEnter", function(self)
-                    self.highlight = self.highlight or self:CreateTexture(nil, "HIGHLIGHT")
-                    self.highlight:SetAllPoints()
-                    self.highlight:SetColorTexture(1, 1, 1, 0.25)
-                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                    GameTooltip:AddLine(spellName .. (rank and (" (" .. rank .. ")") or ""), 1, 1, 1)
-                    GameTooltip:Show()
-                end)
-                btn:SetScript("OnLeave", function(self)
-                    if self.highlight then
-                        self.highlight:Hide()
-                    end
-                    GameTooltip:Hide()
-                end)
-                btn:SetScript("OnClick", function()
-                    print("Icon texture path: " .. icon)
-                end)
-            end
-        end
-    end
-
-    -- register the frame so Toggle can hide it
-    _G["BgGeneralTexturePicker"] = frame
 end
 
 ---local Handle events registered to plugin. Copies coordinates to chat line for shift-LeftClick
