@@ -25,7 +25,7 @@ local nodeIcons = {
     ["Stables"] = "Interface\\Icons\\Ability_Mount_RidingHorse",
     ["Gold Mine"] = "Interface\\Icons\\trade_mining",
     ["Blacksmith"] = "Interface\\Icons\\Trade_BlackSmithing",
-    ["Lumber Mill"] = "Interface\\Icons\\INV_Crate_05",
+    ["Lumber Mill"] = "Interface\\Icons\\INV_Axe_09",
     ["Farm"] = "Interface\\Icons\\INV_Misc_Food_Wheat_01"
 }
 
@@ -55,11 +55,11 @@ local nodeAbbrToName = {
 }
 
 local wsgCols = {
-    { abbr = "EFC",  full = "EFC",    icon = "Interface\\Icons\\INV_BannerPVP_02" },
-    { abbr = "FC",   full = "FC",     icon = "Interface\\Icons\\INV_BannerPVP_01" },
+    { abbr = "EFC",  full = "EFC",    icon = "Interface\\Icons\\inv_misc_tournaments_symbol_scourge" },
+    { abbr = "FC",   full = "FC",     icon = "Interface\\Icons\\spell_misc_hellifrepvphonorholdfavor" },
     { abbr = "MID",  full = "Mid",    icon = "Interface\\Icons\\Ability_Warrior_OffensiveStance" },
     { abbr = "RAMP", full = "Ramp",   icon = "Interface\\Icons\\Ability_Warrior_Charge" },
-    { abbr = "TUN",  full = "Tunnel", icon = "Interface\\Icons\\Ability_Druid_Dash" },
+    { abbr = "TUN",  full = "Tunnel", icon = "Interface\\Icons\\Ability_Stealth" },
 }
 local wsgRowActions = { "INC", "DEF", "HELP", "KILL", "GO", "CAP" }
 

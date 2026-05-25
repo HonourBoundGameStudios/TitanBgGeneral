@@ -5,6 +5,7 @@
 ## Notes: Battleground General!
 ## Author: Honour Bound Game Studios Inc.
 ## SavedVariables: TitanBgGeneralSaved
-## OptionalDeps: 
+## X-Curse-Project-ID: 0
+## OptionalDeps:
 ## Dependencies: Titan
 TitanBgGeneral.lua
