@@ -62,6 +62,7 @@ local function OnLoad(self)
         category = "Combat",
         version = VERSION,
         menuText = "Battleground General",
+        menuTextFunction = PrepareBgGeneralMenu,
         buttonText = "Battleground General",
         tooltipTitle = "Battleground General",
         tooltipTextFunction = GetTooltipText,
@@ -242,14 +243,25 @@ local function ToggleBgGeneralScreen()
     _G["BgGeneralWindow"] = frame
 end
 
----local Handle events registered to plugin. Copies coordinates to chat line for shift-LeftClick
+-- ******************************** PrepareBgGeneralMenu *******************************
+---local Build the right-click dropdown menu (UIDropDownMenu scheme)
+local function PrepareBgGeneralMenu()
+    TitanPanelRightClickMenu_AddTitle(TitanPlugins[ADDON_ID].menuText)
+
+    local level = TitanPanelRightClickMenu_GetDropdownLevel()
+
+    TitanPanelRightClickMenu_AddToggleIcon(ADDON_ID, level)
+    TitanPanelRightClickMenu_AddToggleRightSide(ADDON_ID, level)
+    TitanPanelRightClickMenu_AddSpacer()
+    TitanPanelRightClickMenu_AddHide(ADDON_ID, level)
+end
+
+---local Handle events registered to plugin
 ---@param self Button
 ---@param button string
 local function OnClick(self, button)
     if (button == "LeftButton") then
         ToggleBgGeneralScreen()
-    elseif (button == "RightButton") then
-        BgGeneralTexturePicker()
     end
 end
 
@@ -279,12 +291,12 @@ end
 -- Check if Titan Panel's global ID exists before attempting to create frames
 -- This ensures Titan Panel is loaded before we try to interact with it.
 if TITAN_ID then
-    dbg:Out("Flow", "TitanWeaponSkills: TITAN_ID found. Attempting to create button frame.")
+    dbg:Out("Flow", "TitanBgGeneral: TITAN_ID found. Attempting to create button frame.")
     CreateTitanButton()
 else
     -- If TITAN_ID is not immediately available, we might still be too early.
     -- This scenario is less likely with ##Dependencies, but good to be aware.
-    dbg:Out("Flow", "TitanWeaponSkills: TITAN_ID not found at initial load. This addon might load before Titan Panel.")
+    dbg:Out("Flow", "TitanBgGeneral: TITAN_ID not found at initial load. This addon might load before Titan Panel.")
     -- For robustness, you could add an ADDON_LOADED listener for "Titan" here
     -- if you consistently find TITAN_ID missing at this point.
     -- However, ##Dependencies: Titan in .toc should generally handle this.
