@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BG Addon Market — Recap &amp; Gap Analysis · TitanBgGeneral</title>
+<style>
+  :root {
+    --bg:        #0d0f14;
+    --panel:     #161a22;
+    --panel-2:   #1c212c;
+    --border:    #2c3340;
+    --text:      #d6dae2;
+    --muted:     #8a93a3;
+    --gold:      #ffd100;
+    --gold-dim:  #c9a227;
+    --alliance:  #4a9eda;
+    --horde:     #d04545;
+    --green:     #4caf78;
+    --amber:     #e0a93e;
+    --red:       #d36a6a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.55;
+    font-size: 15.5px;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 32px 28px 80px; }
+
+  /* ---------- header ---------- */
+  header {
+    border-bottom: 2px solid var(--gold-dim);
+    padding-bottom: 18px;
+    margin-bottom: 28px;
+  }
+  header h1 {
+    margin: 0 0 6px;
+    font-size: 27px;
+    color: var(--gold);
+    letter-spacing: .3px;
+  }
+  header .sub { color: var(--muted); font-size: 15px; }
+  .badges { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .badge {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 20px;
+    font-size: 12.5px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--muted);
+  }
+  .badge b { color: var(--text); font-weight: 600; }
+  .badge.draft  b { color: var(--amber); }
+  .badge.conf   b { color: var(--amber); }
+
+  /* ---------- sections ---------- */
+  h2 {
+    color: var(--gold);
+    font-size: 20px;
+    margin: 44px 0 14px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { color: var(--text); font-size: 16.5px; margin: 26px 0 10px; }
+  p  { margin: 10px 0; }
+  .muted { color: var(--muted); }
+  a { color: var(--alliance); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: Consolas, "Cascadia Code", monospace;
+    font-size: 13px;
+    color: #e8c97a;
+  }
+
+  /* ---------- callout boxes ---------- */
+  .keyfinding {
+    background: linear-gradient(135deg, #1d1a0e, #16131a);
+    border: 1px solid var(--gold-dim);
+    border-left: 5px solid var(--gold);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 18px 0;
+    font-size: 16px;
+  }
+  .keyfinding b { color: var(--gold); }
+
+  /* ---------- BG recap cards ---------- */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin: 18px 0; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .card h3 { margin: 0 0 10px; font-size: 17px; }
+  .card.ab  h3 { color: var(--amber); }
+  .card.wsg h3 { color: var(--horde); }
+  .card.av  h3 { color: var(--alliance); }
+  .card .row { margin: 8px 0; font-size: 14.5px; }
+  .card .lbl {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .8px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+
+  /* ---------- tables ---------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0 22px;
+    font-size: 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  th {
+    text-align: left;
+    background: var(--panel-2);
+    color: var(--gold-dim);
+    font-size: 12.5px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  td { padding: 9px 12px; border-bottom: 1px solid #232936; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  table.wide td:first-child { white-space: normal; }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 9px;
+    border-radius: 12px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: .3px;
+  }
+  .pill.unique { background: #1f3326; color: var(--green); border: 1px solid #2f5b3e; }
+  .pill.parity { background: #332b1f; color: var(--amber); border: 1px solid #5b4c2f; }
+  .pill.low    { background: #2a2330; color: #a98fc9;     border: 1px solid #4a3b5b; }
+  .pill.era    { background: #1f2933; color: var(--alliance); border: 1px solid #2f4a5b; }
+
+  /* ---------- quadrant chart ---------- */
+  .quad-wrap { margin: 22px 0 8px; }
+  .quad {
+    display: grid;
+    grid-template-columns: 34px 1fr 1fr;
+    grid-template-rows: 1fr 1fr 34px;
+    gap: 0;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .quad .cell {
+    border: 1px solid var(--border);
+    min-height: 150px;
+    padding: 14px 16px;
+    background: var(--panel);
+    font-size: 13.5px;
+  }
+  .quad .cell h4 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+  .quad .cell ul { margin: 0; padding-left: 18px; }
+  .quad .cell li { margin: 3px 0; }
+  .quad .cell.hot {
+    background: linear-gradient(135deg, #221c0d, #1a1410);
+    border: 1.5px solid var(--gold);
+    box-shadow: 0 0 22px rgba(255, 209, 0, .12) inset;
+  }
+  .quad .cell.hot h4 { color: var(--gold); }
+  .quad .cell.hot .us { color: var(--gold); font-weight: 700; }
+  .quad .ylab {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted);
+    font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  }
+  .quad .xlab {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted);
+    font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  }
+  .quad .corner { background: transparent; border: none; min-height: 0; }
+  .caption { text-align: center; color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+  /* ---------- gap list ---------- */
+  ol.gaps { counter-reset: gap; list-style: none; padding: 0; margin: 16px 0; }
+  ol.gaps li {
+    counter-increment: gap;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px 12px 56px;
+    margin: 10px 0;
+    position: relative;
+  }
+  ol.gaps li::before {
+    content: counter(gap);
+    position: absolute;
+    left: 14px; top: 12px;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--gold);
+    color: #14110a;
+    font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+  }
+  ol.gaps b:first-child { color: var(--gold); }
+  .tag {
+    display: inline-block;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 7px;
+    color: var(--green);
+    margin-left: 6px;
+  }
+
+  /* ---------- recommendation ---------- */
+  ol.recs { padding-left: 0; margin: 16px 0; list-style: none; counter-reset: rec; }
+  ol.recs li {
+    counter-increment: rec;
+    margin: 12px 0;
+    padding: 12px 16px 12px 52px;
+    background: var(--panel);
+    border-left: 4px solid var(--green);
+    border-radius: 6px;
+    position: relative;
+  }
+  ol.recs li::before {
+    content: counter(rec);
+    position: absolute; left: 16px; top: 13px;
+    color: var(--green); font-weight: 800; font-size: 17px;
+  }
+  ol.recs li.top { border-left-color: var(--gold); background: linear-gradient(135deg, #1d1a0e, var(--panel)); }
+  ol.recs li.top::before { color: var(--gold); }
+
+  /* ---------- risks / actions ---------- */
+  .risk { border-left: 4px solid var(--red); background: var(--panel); border-radius: 6px; padding: 10px 16px; margin: 10px 0; }
+  .risk b { color: var(--red); }
+  ul.actions { list-style: none; padding: 0; }
+  ul.actions li { padding: 7px 0 7px 30px; position: relative; border-bottom: 1px dashed #232936; }
+  ul.actions li::before { content: "☐"; position: absolute; left: 4px; color: var(--gold-dim); font-size: 17px; }
+
+  /* ---------- sources ---------- */
+  .sources { columns: 2; column-gap: 36px; font-size: 13.5px; }
+  .sources li { margin: 4px 0; break-inside: avoid; }
+  @media (max-width: 760px) { .sources { columns: 1; } .quad { grid-template-columns: 24px 1fr 1fr; } }
+
+  footer { margin-top: 56px; color: var(--muted); font-size: 12.5px; text-align: center; border-top: 1px solid var(--border); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>⚔️ Battleground Addon Market — Per-BG Recap &amp; Gap Analysis</h1>
+  <div class="sub">TitanBgGeneral · Research/addon-market-gap-research.md rendered for review</div>
+  <div class="badges">
+    <span class="badge"><b>Date</b>&nbsp; 2026-06-10</span>
+    <span class="badge">Status&nbsp;<b style="color: var(--green)">Final</b></span>
+    <span class="badge conf">Confidence&nbsp;<b>Medium</b></span>
+    <span class="badge">Author&nbsp;<b>Claude Code (web survey), for Richard's review</b></span>
+    <span class="badge">Flavors&nbsp;<b>n/a — market research, Classic Era lens</b></span>
+  </div>
+</header>
+
+<!-- ================= EXEC SUMMARY ================= -->
+<h2>Executive Summary</h2>
+<p>The Classic battleground addon market splits cleanly into four categories — <b>timers/state display</b> (Capping, DBM-PvP, REPorter), <b>enemy frames</b> (BattlegroundEnemies, VantageEnemyFrames, TargetEFC), <b>static callout buttons</b> (Arathi Calls, BG Caller, BGSoundAlerts, Incoming-BG), and <b>leader QoL</b> (Battleground Commander — not even on Era).</p>
+<div class="keyfinding">
+  Every existing addon either <b>shows data</b> or <b>sends canned text</b>. <b>No addon on any flavor advises</b> — none computes "what should we do next", none ranks enemy threats into engage/avoid guidance, and none fuses live BG state into the callout it sends. Those three gaps are exactly <code>AB-4/AB-5</code>, <code>CMD-6/CMD-7</code>, and <code>WSG-3</code> in our backlog — and the underlying research for all of them is already done.
+</div>
+<p>The biggest bang-for-buck items are the ones nobody else has: the <b>engage/avoid threat advisor</b> (research complete, scoreboard-only dependency) and <b>state-enriched callouts</b> (the unique fusion of what Capping knows with what Arathi Calls does).</p>
+
+<!-- ================= QUESTION / CONSTRAINTS ================= -->
+<h2>Research Question</h2>
+<p>For each battleground (AB, WSG, AV): what do we have today, what does the existing Classic addon market offer, what does <b>not</b> exist anywhere, and which backlog epics buy the most differentiation per unit of effort?</p>
+
+<h2>Constraints</h2>
+<ul>
+  <li>Primary target is <b>Classic Era / Anniversary realms</b> — addons that only ship for retail or Wrath/Cata Classic leave the Era field open.</li>
+  <li>Findings come from CurseForge/WowInterface/Wago listings and addon descriptions (web survey), not from reading every competitor's source. Capping and DBM-PvP source <i>have</i> been read — see <code>dbm-pvp-review-reference.md</code> and <code>ab-node-state-research.md</code>.</li>
+  <li>"Doesn't exist" claims are as good as the search coverage; a niche or abandoned addon could have been missed (see Risks).</li>
+</ul>
+
+<!-- ================= PER-BG RECAP ================= -->
+<h2>Per-BG Recap — Where We Stand</h2>
+<p class="muted">From <code>TitanBgGeneral.lua</code>, develop @ <code>3c4b688</code>. In market terms, today we are a (multi-BG, Titan-integrated) member of the <b>static callout buttons</b> category.</p>
+
+<div class="cards">
+  <div class="card ab">
+    <h3>🏰 Arathi Basin</h3>
+    <div class="row"><span class="lbl">Shipped</span><br>5-node (ST/GM/BS/LM/FM) × 6-row callout grid · player-count rows · Shift/Ctrl/Alt message variants</div>
+    <div class="row"><span class="lbl">Planned</span><br>Node strip <span class="tag">AB-2</span> · cap timers <span class="tag">AB-3</span> · enriched callouts <span class="tag">AB-4</span> · advice engine <span class="tag">AB-5</span></div>
+    <div class="row"><span class="lbl">Market</span><br>Capping/DBM own timers; Arathi Calls &amp; BG Caller own static callouts. <b>Nobody combines them. Nobody advises.</b></div>
+  </div>
+  <div class="card wsg">
+    <h3>🚩 Warsong Gulch</h3>
+    <div class="row"><span class="lbl">Shipped</span><br>EFC/FC/MID/RAMP/TUN × INC/DEF/HELP/KILL/GO/CAP grid</div>
+    <div class="row"><span class="lbl">Planned</span><br>FC panel <span class="tag">WSG-2</span> · FC-aware callouts <span class="tag">WSG-3</span> · respawn/debuff timers <span class="tag">WSG-4</span></div>
+    <div class="row"><span class="lbl">Market</span><br>FC name + health <i>display</i> is well-served (Capping, SSPVP3, TargetEFC) — WSG-2 is parity. The differentiator is <b>WSG-3: FC-aware callouts</b>, which nothing does.</div>
+  </div>
+  <div class="card av">
+    <h3>🏔️ Alterac Valley</h3>
+    <div class="row"><span class="lbl">Shipped</span><br>DB/IW/SH/SF/TP/IB/FW × INC/DEF/HELP/CAP/GO/RECAP grid</div>
+    <div class="row"><span class="lbl">Planned</span><br>AV-specific callouts <span class="tag">AV-2</span></div>
+    <div class="row"><span class="lbl">Market</span><br>Capping/DBM serve AV timers well; AV is a zerg with low advisor value. <b>Keep effort minimal.</b></div>
+  </div>
+</div>
+
+<p><span class="lbl" style="display:inline">Shared foundation already shipped:</span> locale-independent BG detection (instanceMapID) · auto tab select on zone-in · auto-open/close on BG entry/exit · BG abbreviation on the Titan bar · channel priority INSTANCE_CHAT → RAID → PARTY → SAY · drag-movable window with saved position.</p>
+
+<!-- ================= MARKET QUADRANT ================= -->
+<h2>The Market in One Picture</h2>
+<div class="quad-wrap">
+  <div class="quad">
+    <div class="ylab">Talks to the team ⟶</div>
+    <div class="cell">
+      <h4>Talks · Blind</h4>
+      <ul>
+        <li>Arathi Calls</li>
+        <li>BG Caller: Arathi Basin</li>
+        <li>BGCallouts · Incoming-BG</li>
+        <li>BGSoundAlerts</li>
+        <li><b>TitanBgGeneral (today)</b></li>
+      </ul>
+    </div>
+    <div class="cell hot">
+      <h4>★ Data-driven direction</h4>
+      <ul>
+        <li class="us">EMPTY — on every flavor</li>
+        <li>Advice engine <span class="tag">AB-5</span></li>
+        <li>Engage/avoid advisor <span class="tag">CMD-7</span></li>
+        <li>Enriched callouts <span class="tag">AB-4</span> <span class="tag">WSG-3</span></li>
+        <li>CC-priority calls <span class="tag">CMD-6</span></li>
+      </ul>
+    </div>
+    <div class="corner"></div>
+    <div class="cell">
+      <h4>Silent · Blind</h4>
+      <ul>
+        <li>Battleground Commander <span class="muted">(queue/marker QoL, no Era)</span></li>
+        <li>BGSoundAlerts' audio cues</li>
+      </ul>
+    </div>
+    <div class="cell">
+      <h4>Silent · Has data</h4>
+      <ul>
+        <li>Capping <span class="muted">(10.5M DL)</span></li>
+        <li>DBM-PvP · REPorter · SSPVP3</li>
+        <li>BattlegroundEnemies · VantageEnemyFrames</li>
+        <li>TargetEFC · BGH (retail)</li>
+      </ul>
+    </div>
+    <div class="corner"></div>
+    <div class="xlab" style="grid-column: 2 / 4;">Has live data ⟶</div>
+  </div>
+  <div class="caption">Every competitor sits on an axis endpoint. The upper-right quadrant — the project vision — is empty on every flavor.</div>
+</div>
+
+<!-- ================= FINDINGS TABLES ================= -->
+<h2>Findings — The Competitive Field</h2>
+
+<h3>Timers / state display</h3>
+<table>
+  <tr><th>Addon</th><th>Flavors</th><th>What it does</th><th>What it doesn't</th></tr>
+  <tr><td>Capping Battleground Timers <span class="muted">(~10.5M DL, upd. Apr 2026)</span></td><td><span class="pill era">All incl. Era</span></td><td>AB node capture timers + final-score estimation, WSG flag respawn timers + FC map/health, AV timers</td><td>No callouts, no chat output, no advice</td></tr>
+  <tr><td>DBM-PvP</td><td><span class="pill era">All incl. Era</span></td><td>Cap-timer bars, warnings, win-condition resource estimate (the bases-to-win math — see <code>dbm-pvp-review-reference.md</code>)</td><td>Displays info to the player; never directs the team</td></tr>
+  <tr><td>REPorter — Battleground Map</td><td>Retail-focused</td><td>Slim BG map: node states, capture timers, flag respawn</td><td>Not an Era staple; passive display</td></tr>
+  <tr><td>SSPVP3</td><td>Old multi-flavor lineage</td><td>AB/EotS match info; WSG FC names colored by class + health when available</td><td>Passive display</td></tr>
+</table>
+
+<h3>Enemy frames</h3>
+<table>
+  <tr><th>Addon</th><th>Flavors</th><th>What it does</th><th>What it doesn't</th></tr>
+  <tr><td>BattlegroundEnemies</td><td><span class="pill era">Era → retail</span></td><td>Enemy/ally frames, targeting counts, racial/trinket tracking; <i>de facto</i> healer spotting by eyeball</td><td>No threat <b>ranking</b>, no matchup advice, no callouts</td></tr>
+  <tr><td>VantageEnemyFrames</td><td>Newer alternative</td><td>Similar frame display</td><td>Same gaps</td></tr>
+  <tr><td>TargetEFC</td><td>Classic lineage</td><td>EFC name frame + auto-updated <code>/target</code> macro</td><td>Single-purpose</td></tr>
+</table>
+
+<h3>Callout senders — our current direct competitors</h3>
+<table>
+  <tr><th>Addon</th><th>Flavors</th><th>What it does</th><th>What it doesn't</th></tr>
+  <tr><td>Arathi Calls</td><td>Classic</td><td>Quick "INC &lt;base&gt;" alert buttons for the 5 AB bases</td><td>AB-only; static text; no live state</td></tr>
+  <tr><td>BG Caller: Arathi Basin</td><td>Classic</td><td>Click objective → pick message → send to BG chat</td><td>AB-only; static text</td></tr>
+  <tr><td>BGCallouts <span class="muted">(WowInterface)</span></td><td>Old</td><td>Button-grid callouts</td><td>Static text</td></tr>
+  <tr><td>Incoming-BG</td><td>Wrath-era</td><td>Mouse-driven "help at X" calls</td><td>Static text</td></tr>
+  <tr><td>BGSoundAlerts</td><td>Old</td><td>Spoken sound cues + a communication list for orders</td><td>Static text; audio gimmick</td></tr>
+</table>
+<p>None embeds game state in the message. None covers WSG and AV with the same quality as AB. None integrates a data layer at all.</p>
+
+<h3>Leader / command tools</h3>
+<table>
+  <tr><th>Addon</th><th>Flavors</th><th>What it does</th><th>What it doesn't</th></tr>
+  <tr><td>Battleground Commander <span class="muted">(~106K DL)</span></td><td>Retail + Wrath/Cata — <b>no Era</b></td><td>Queue QoL, auto raid-mark the leader, auto-assign assists, ready checks, raid-warning history frame</td><td>Logistics QoL only — no tactical direction, no role/node assignments, not on Era</td></tr>
+  <tr><td>BGH — Battle Ground Helper</td><td>Retail only</td><td>Floating HUD: who defends each base, incomings, FCs</td><td>Passive HUD; retail only</td></tr>
+  <tr><td>BGAssist <span class="muted">(Turtle WoW)</span></td><td>Custom client</td><td>Timers, flag tracking, player counting</td><td>Different client entirely — evidence of demand, not competition</td></tr>
+</table>
+
+<!-- ================= GAPS ================= -->
+<h2>What Does Not Exist Anywhere (any flavor)</h2>
+<ol class="gaps">
+  <li><b>An advice engine</b> — nothing computes "you hold 2 bases and are behind; attack the weakest enemy base" <span class="tag">AB-5</span>. The closest thing, DBM-PvP's bases-to-win estimate, displays a number and stops.</li>
+  <li><b>A per-player engage/avoid advisor</b> — nothing combines threat ranking (damage/healing from the scoreboard) with class matchups into "kill this one, run from that one" <span class="tag">CMD-7</span>. Enemy-frame addons show <i>who exists</i>, not <i>who matters to you</i>.</li>
+  <li><b>State-enriched callouts</b> — nothing sends "INC ST — 4+, flips in 0:22" <span class="tag">AB-4</span> or "EFC &lt;name&gt; LOW — kill at tunnel" <span class="tag">WSG-3</span>. The data layer (Capping/DBM) and the callout layer (Arathi Calls et al.) have never been fused in one addon.</li>
+  <li><b>CC-priority callouts</b> — nothing names enemy healers as CC/kill targets in team chat from scoreboard data <span class="tag">CMD-6</span>.</li>
+  <li><b>Era-native leader command &amp; control</b> — role/node assignment boards and opening-split presets <span class="tag">CMD-1</span> <span class="tag">CMD-2</span> exist nowhere on Era; Battleground Commander is the nearest neighbour and is neither on Era nor tactical.</li>
+</ol>
+
+<h3>Already well-served — don't compete head-on</h3>
+<ul>
+  <li><b>Raw timers and node-state display</b> — Capping (10.5M downloads) and DBM-PvP own this. Build AB-2/AB-3 as <i>plumbing for the advisor and enriched callouts</i>, not as the headline feature.</li>
+  <li><b>WSG FC name + health display</b> — Capping, SSPVP3, and TargetEFC all do it. WSG-2 is table stakes; the differentiation is WSG-3 (FC-aware <b>callouts</b>).</li>
+  <li><b>Enemy unit frames</b> — BattlegroundEnemies is mature. CMD-7 must be a small advisory list, not another frame addon.</li>
+</ul>
+
+<!-- ================= ANALYSIS ================= -->
+<h2>Analysis — Effort vs Differentiation</h2>
+<table class="wide">
+  <tr><th>Backlog item</th><th>Differentiation</th><th>Effort</th><th>Notes</th></tr>
+  <tr>
+    <td><b>CMD-6/7</b> threat list + engage/avoid</td>
+    <td><span class="pill unique">UNIQUE — all flavors</span></td>
+    <td>Low–medium</td>
+    <td>Research done (<code>enemy-threat-research.md</code>, <code>classic-class-matchup-reference.md</code>); scoreboard ticker + a small list window; no node-state dependency; valuable even when <i>not</i> leading</td>
+  </tr>
+  <tr>
+    <td><b>AB-4/5</b> enriched callouts + advice engine</td>
+    <td><span class="pill unique">UNIQUE — all flavors</span></td>
+    <td>Medium</td>
+    <td>Needs AB-2/3 plumbing first; decode-table <code>/dump</code> session pending</td>
+  </tr>
+  <tr>
+    <td><b>WSG-3</b> FC-aware callouts</td>
+    <td><span class="pill unique">UNIQUE (callout half)</span></td>
+    <td>Medium</td>
+    <td>WSG-2 panel itself is parity with Capping; pattern capture pending</td>
+  </tr>
+  <tr>
+    <td><b>AB-2/3</b> node strip + cap timers</td>
+    <td><span class="pill parity">PARITY with Capping</span></td>
+    <td>Medium</td>
+    <td>Necessary plumbing, not a selling point — keep the UI minimal</td>
+  </tr>
+  <tr>
+    <td><b>CMD-1/2</b> role board / opening splits</td>
+    <td><span class="pill era">UNIQUE on Era</span></td>
+    <td>High (UI-heavy)</td>
+    <td>Value concentrated in premade leading; defer behind the advisor items</td>
+  </tr>
+  <tr>
+    <td><b>AV-2</b> AV-specific callouts</td>
+    <td><span class="pill low">LOW</span></td>
+    <td>Low</td>
+    <td>AV is a zerg; Capping/DBM already serve it; keep minimal</td>
+  </tr>
+</table>
+
+<!-- ================= RECOMMENDATION ================= -->
+<h2>Recommendation</h2>
+<ol class="recs">
+  <li class="top"><b>Lead with the advisor identity.</b> Position the addon as "the addon that tells you what to call", not another timer or callout pad — that category has zero competitors on any flavor.</li>
+  <li class="top"><b>Highest bang-for-buck next: CMD-6/7</b> (threat list → engage/avoid window). Both research docs are fresh, the only dependency is Friday's Era scoreboard <code>/dump</code> verify, it needs no node-state plumbing, and it helps every player every match — not just leaders.</li>
+  <li><b>Then AB-2 → AB-5 as one arc</b>, framing AB-2/3 explicitly as plumbing (minimal strip UI) so the effort lands on AB-4/5 where the differentiation is.</li>
+  <li><b>WSG-2 stays lean</b> (parity feature); spend the WSG effort on WSG-3.</li>
+  <li><b>Defer CMD-1/2 and AV-2</b> — real but narrower value, higher UI cost.</li>
+</ol>
+<p class="muted">This reorders nothing destructively — it suggests pulling CMD-6/7 forward, ahead of (or interleaved with) Epic 2. Decision is the user's; the backlog order is otherwise sound.</p>
+
+<!-- ================= RISKS ================= -->
+<h2>Risks</h2>
+<div class="risk"><b>Coverage risk</b> — the survey is listing-based; an obscure or abandoned addon with advisor features could exist. Mitigation: claims are framed as "not found", and the category leaders' feature lists were checked individually.</div>
+<div class="risk"><b>Fast-follow risk</b> — Capping or DBM-PvP could add callout output more easily than callout addons could add data. Our moat is the advice layer (rules + matchup data), which is design work, not API plumbing.</div>
+<div class="risk"><b>Era API risk</b> — the differentiating features still hang on the pending in-game verifies (scoreboard shape, AB decode tables, WSG patterns). Already tracked as action items in the respective research docs.</div>
+
+<!-- ================= ACTIONS ================= -->
+<h2>Action Items</h2>
+<ul class="actions">
+  <li style="text-decoration: line-through; color: var(--muted)">User review of this recap (2026-06-10) — recommendation accepted</li>
+  <li style="text-decoration: line-through; color: var(--muted)">CMD-6/7 pulled ahead of AB-2 — now Epic 1.5 in <code>Process/Backlog.md</code></li>
+  <li>Friday's <code>/dump</code> session remains the gate for both CMD-6/7 (scoreboard) and AB-2/3 (POI decode tables) — unchanged</li>
+  <li style="text-decoration: line-through; color: var(--muted)">Status flipped to Final; CLAUDE.md table row added</li>
+</ul>
+
+<!-- ================= SOURCES ================= -->
+<h2>Sources</h2>
+<ul class="sources">
+  <li><a href="https://www.curseforge.com/wow/addons/capping-bg-timers">Capping Battleground Timers</a></li>
+  <li><a href="https://www.curseforge.com/wow/addons/sspvp3">SSPVP3</a></li>
+  <li><a href="https://www.curseforge.com/wow/addons/battlegroundenemies">BattlegroundEnemies</a></li>
+  <li><a href="https://www.curseforge.com/wow/addons/vantageenemyframes">VantageEnemyFrames</a></li>
+  <li><a href="https://www.curseforge.com/wow/addons/arathi-calls">Arathi Calls</a></li>
+  <li><a href="https://www.curseforge.com/wow/addons/bg-caller-arathi-basin">BG Caller: Arathi Basin</a></li>
+  <li><a href="https://www.wowinterface.com/downloads/info23501-BGCallouts.html">BGCallouts</a></li>
+  <li><a href="https://www.wowinterface.com/downloads/info7278-BGSoundAlerts.html">BGSoundAlerts</a></li>
+  <li><a href="https://www.curseforge.com/wow/addons/inccallout">Incoming-BG</a></li>
+  <li><a href="https://www.curseforge.com/wow/addons/battleground-commander">Battleground Commander</a> · <a href="https://github.com/linaori/wow-battleground-commander">GitHub</a></li>
+  <li><a href="https://www.curseforge.com/wow/addons/bgh-battle-ground-helper">BGH — Battle Ground Helper</a></li>
+  <li><a href="https://addons.wago.io/addons/reporter-battleground-map">REPorter — Battleground Map</a></li>
+  <li><a href="https://addonswow.com/targetefc">TargetEFC</a></li>
+  <li><a href="https://turtle-wow.fandom.com/wiki/BGAssist">BGAssist (Turtle WoW)</a></li>
+  <li>Internal: <code>dbm-pvp-review-reference.md</code>, <code>ab-node-state-research.md</code>, <code>enemy-threat-research.md</code>, <code>classic-class-matchup-reference.md</code>, <code>Process/Backlog.md</code></li>
+</ul>
+
+<footer>
+  Rendered from <code>Research/addon-market-gap-research.md</code> · the markdown file remains the source of truth — edit there, regenerate here.
+</footer>
+
+</div>
+</body>
+</html>
