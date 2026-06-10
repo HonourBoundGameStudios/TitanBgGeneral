@@ -49,7 +49,7 @@ From "callout buttons" to "the addon tells you what to call".
 
 User call: AV gets a panel too, alongside the WSG/AB advisor focus.
 
-- [ ] **[AV-1] AV grid tab** — third tab alongside AB/WSG with location columns × action rows, same callout pattern
+- [x] **[AV-1] AV grid tab** — third tab alongside AB/WSG: 7 columns (DB/IW/SH/SF/TP/IB/FW) × INC/DEF/HELP/CAP/GO/RECAP via the shared `BuildColGrid`; window sizes to the widest grid (smoke rows W5/W6/C5 green in-game 2026-06-09)
 - [ ] **[AV-2] AV-specific callouts** — tune locations/actions for AV's flow (towers, GYs, bosses) once AV-1 is played with
 
 ## Epic 4 — Command & Control

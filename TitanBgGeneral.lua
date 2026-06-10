@@ -63,6 +63,17 @@ local wsgCols = {
 }
 local wsgRowActions = { "INC", "DEF", "HELP", "KILL", "GO", "CAP" }
 
+local avCols = {
+    { abbr = "DB", full = "Dun Baldar",     icon = "Interface\\Icons\\INV_BannerPVP_02" },
+    { abbr = "IW", full = "Icewing Bunker", icon = "Interface\\Icons\\Spell_Frost_FrostArmor02" },
+    { abbr = "SH", full = "Stonehearth",    icon = "Interface\\Icons\\INV_Stone_15" },
+    { abbr = "SF", full = "Snowfall GY",    icon = "Interface\\Icons\\Spell_Frost_IceStorm" },
+    { abbr = "TP", full = "Tower Point",    icon = "Interface\\Icons\\Spell_Fire_Immolation" },
+    { abbr = "IB", full = "Iceblood",       icon = "Interface\\Icons\\Spell_Frost_FrostShock" },
+    { abbr = "FW", full = "Frostwolf",      icon = "Interface\\Icons\\INV_BannerPVP_01" },
+}
+local avRowActions = { "INC", "DEF", "HELP", "CAP", "GO", "RECAP" }
+
 -- ******************************** PrepareBgGeneralMenu *******************************
 ---local Build the right-click dropdown menu (UIDropDownMenu scheme)
 local function PrepareBgGeneralMenu()
@@ -193,12 +204,13 @@ local function BuildAbGrid(parent, size, hGap, vGap)
     end
 end
 
--- ******************************** Build WSG Grid *******************************
-local function BuildWsgGrid(parent, size, hGap, vGap)
-    for col = 1, #wsgCols do
-        local colData = wsgCols[col]
-        for row = 1, #wsgRowActions do
-            local rowAction = wsgRowActions[row]
+-- ******************************** Build Column Grid (WSG / AV) *******************************
+-- Generic location-columns × action-rows grid; colDefs entries carry abbr/full/icon.
+local function BuildColGrid(parent, size, hGap, vGap, colDefs, rowActions)
+    for col = 1, #colDefs do
+        local colData = colDefs[col]
+        for row = 1, #rowActions do
+            local rowAction = rowActions[row]
             local btn = CreateFrame("Button", nil, parent)
             btn:SetSize(size, size)
             btn:SetPoint("TOPLEFT", parent, "TOPLEFT", (col - 1) * (size + hGap), -(row - 1) * (size + vGap))
@@ -257,7 +269,8 @@ local function ToggleBgGeneralScreen()
         return
     end
 
-    local cols, rows  = 5, 6
+    local abCols      = 5
+    local rows        = 6
     local size        = 22
     local hGap, vGap  = 5, 5
     local pad         = 10
@@ -266,10 +279,14 @@ local function ToggleBgGeneralScreen()
     local tabH        = 22
     local tabGap      = 4
 
-    local gridW  = cols * size + (cols - 1) * hGap
-    local gridH  = rows * size + (rows - 1) * vGap
-    local totalW = pad * 2 + gridW
-    local totalH = pad * 2 + titleH + titleGap + tabH + tabGap + gridH
+    local function gridWidth(nCols) return nCols * size + (nCols - 1) * hGap end
+
+    -- Window is sized to the widest grid; narrower grids center within it
+    local maxCols = math.max(abCols, #wsgCols, #avCols)
+    local gridW   = gridWidth(maxCols)
+    local gridH   = rows * size + (rows - 1) * vGap
+    local totalW  = pad * 2 + gridW
+    local totalH  = pad * 2 + titleH + titleGap + tabH + tabGap + gridH
 
     local frame = CreateFrame("Frame", "BgGeneralWindow", UIParent, "BackdropTemplate")
     frame:SetSize(totalW, totalH)
@@ -320,7 +337,7 @@ local function ToggleBgGeneralScreen()
 
     -- Tab buttons
     local tabOffsetY = -pad - titleH - titleGap
-    local tabW = (gridW - 4) / 2
+    local tabW = (gridW - 2 * 4) / 3
 
     local tabAB = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     tabAB:SetSize(tabW, tabH)
@@ -332,34 +349,50 @@ local function ToggleBgGeneralScreen()
     tabWSG:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + tabW + 4, tabOffsetY)
     tabWSG:SetText("WSG")
 
-    -- Grid containers
+    local tabAV = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    tabAV:SetSize(tabW, tabH)
+    tabAV:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + 2 * (tabW + 4), tabOffsetY)
+    tabAV:SetText("AV")
+
+    -- Grid containers (each sized to its own grid, centered in the window)
     local gridOffsetY = tabOffsetY - tabH - tabGap
 
     local abContainer = CreateFrame("Frame", nil, frame)
-    abContainer:SetSize(gridW, gridH)
-    abContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, gridOffsetY)
+    abContainer:SetSize(gridWidth(abCols), gridH)
+    abContainer:SetPoint("TOP", frame, "TOP", 0, gridOffsetY)
     BuildAbGrid(abContainer, size, hGap, vGap)
 
     local wsgContainer = CreateFrame("Frame", nil, frame)
-    wsgContainer:SetSize(gridW, gridH)
-    wsgContainer:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, gridOffsetY)
-    BuildWsgGrid(wsgContainer, size, hGap, vGap)
+    wsgContainer:SetSize(gridWidth(#wsgCols), gridH)
+    wsgContainer:SetPoint("TOP", frame, "TOP", 0, gridOffsetY)
+    BuildColGrid(wsgContainer, size, hGap, vGap, wsgCols, wsgRowActions)
     wsgContainer:Hide()
 
-    tabAB:SetScript("OnClick", function()
-        abContainer:Show()
-        wsgContainer:Hide()
-    end)
-    tabWSG:SetScript("OnClick", function()
+    local avContainer = CreateFrame("Frame", nil, frame)
+    avContainer:SetSize(gridWidth(#avCols), gridH)
+    avContainer:SetPoint("TOP", frame, "TOP", 0, gridOffsetY)
+    BuildColGrid(avContainer, size, hGap, vGap, avCols, avRowActions)
+    avContainer:Hide()
+
+    local function selectTab(container)
         abContainer:Hide()
-        wsgContainer:Show()
-    end)
+        wsgContainer:Hide()
+        avContainer:Hide()
+        container:Show()
+    end
+
+    tabAB:SetScript("OnClick", function() selectTab(abContainer) end)
+    tabWSG:SetScript("OnClick", function() selectTab(wsgContainer) end)
+    tabAV:SetScript("OnClick", function() selectTab(avContainer) end)
 
     -- Auto-select tab based on current zone
+    -- (locale-fragile; AWARE-2 replaces this with the instanceMapID lookup
+    -- from Research/bg-detection-reference.md)
     local zone = GetRealZoneText() or GetZoneText() or ""
     if zone:find("Warsong") then
-        abContainer:Hide()
-        wsgContainer:Show()
+        selectTab(wsgContainer)
+    elseif zone:find("Alterac") then
+        selectTab(avContainer)
     end
 
     _G["BgGeneralWindow"] = frame

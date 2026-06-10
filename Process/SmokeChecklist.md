@@ -22,8 +22,10 @@
 |---|---|---|
 | W1 | Left-click the Titan button | BgGeneral window opens; second click closes it |
 | W2 | Drag the window by its title bar, `/reload` | Window reopens at the dragged position (SavedVariables) |
-| W3 | Click the **AB** tab | 5-column AB grid shows (ST, GM, BS, LM, FM); WSG grid hidden |
-| W4 | Click the **WSG** tab | WSG grid shows; AB grid hidden |
+| W3 | Click the **AB** tab | 5-column AB grid shows (ST, GM, BS, LM, FM), centered; other grids hidden |
+| W4 | Click the **WSG** tab | WSG grid shows, centered; other grids hidden |
+| W5 | Click the **AV** tab | 7-column AV grid shows (DB, IW, SH, SF, TP, IB, FW) with icons rendering (no green squares); other grids hidden |
+| W6 | Window width | Fits the 7-column AV grid; three tabs share the row evenly |
 
 ## Callouts
 
@@ -33,6 +35,7 @@
 | C2 | Click a grid button while in a party | Message goes to PARTY |
 | C3 | Click a grid button inside a battleground | Message goes to INSTANCE_CHAT |
 | C4 | Shift/Ctrl/Alt + click a grid cell | Alternate callout variant sent |
+| C5 | Click an AV grid button (e.g. INC × IB) | "INC Iceblood" sent to the right channel; tooltip shows all four variants |
 
 ## Titan integration
 
