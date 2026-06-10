@@ -34,7 +34,10 @@ Pulled ahead of the AB advisor per the market gap analysis
 (`Research/addon-market-gap-research.md`): no addon on any flavor ranks enemy
 threats or advises engage/avoid, the research is already done, it needs no
 node-state plumbing, and it helps every player every match. Gated only on the
-Era scoreboard `/dump` verify (Friday).
+Era scoreboard `/dump` verify (Friday). **Skeleton landed 2026-06-10:**
+ThreatProvider (10s ticker, healer inference, CC/KILL ranking) + `/bgthreat`
+debug print, behind the clearly-marked `SCORE_POS` gate — Friday's dump fixes
+the table if needed and flips it GREEN (smoke rows TP1/TP2).
 
 - [x] **[CMD-5] Research: identifying the most dangerous enemy players** — answered: scoreboard-based ThreatProvider (`GetBattlefieldScore` damage/healing/classToken on a 10s ticker); healers inferred by class + healing ratio, no Era spec detection; includes the classic class rock/paper/scissors as shippable data (see `Research/enemy-threat-research.md` + `Research/classic-class-matchup-reference.md`; Era scoreboard shape needs Friday's `/dump` verify)
 - [ ] **[CMD-6] CC-priority callouts** — surface the top-threat enemies (healers first) from the ThreatProvider and call them for crowd control / kill targets ("CC Kruelhand — healer"), reusing the one-implementation-many-surfaces callout path

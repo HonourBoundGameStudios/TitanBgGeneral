@@ -29,6 +29,13 @@
 | W7 | Open the window while standing inside WSG / AB / AV | The matching tab is auto-selected (map-ID lookup, works on any client locale); outside a BG the AB default shows |
 | W8 | Enter a BG with auto-open enabled (default) | Window opens itself on the right tab; leaving the BG closes it. With auto-open unchecked, the window is left alone in both directions |
 
+## Threat advisor (CMD-6/7)
+
+| # | Step | Expected |
+|---|---|---|
+| TP1 | Outside any BG, `/bgthreat` | Prints the "no enemy scoreboard data yet" line locally; no Lua error; nothing sent to chat |
+| TP2 | Mid-match in an Era BG (after ~2-3 min), `/bgthreat` | Prints `CC: <healers> \| KILL: <dps>` with plausible enemy names/classes; nothing sent to chat — **gated on the scoreboard `/dump` verify** (`Research/enemy-threat-research.md`) |
+
 ## Callouts
 
 | # | Step | Expected |

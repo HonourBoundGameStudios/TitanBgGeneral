@@ -294,6 +294,12 @@ Implementation notes:
 
 ## Action Items — in-game verification (Richard, Era BG, Friday 2026-06-12)
 
+> **Skeleton landed (2026-06-10):** the ThreatProvider from the Recommendation
+> now exists in `TitanBgGeneral.lua` behind this gate — `SCORE_POS` is the
+> clearly-marked unverified table; `/bgthreat` prints the advisory line locally
+> (nothing sent to chat). If the `/dump` disagrees with Details' shape, **fix
+> `SCORE_POS` and nothing else**, then re-run `/bgthreat` mid-match.
+
 - [ ] Mid-match, with the scoreboard opened once, run:
       `/run local n=select("#",GetBattlefieldScore(1)) print("nret",n) for k=1,n do print(k,(select(k,GetBattlefieldScore(1)))) end`
       — confirm count, that position 7 is honor rank, positions 11/12 are
