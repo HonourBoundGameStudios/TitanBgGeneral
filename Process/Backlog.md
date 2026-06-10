@@ -32,7 +32,7 @@ The addon should know where it is. Everything "advisor" builds on this.
 
 From "callout buttons" to "the addon tells you what to call".
 
-- [ ] **[AB-1] Research: reading AB node ownership and capture state per flavor** — world states / `C_AreaPoiInfo` / `UPDATE_BATTLEFIELD_SCORE`; what's actually available on Classic Era is the hard question
+- [x] **[AB-1] Research: reading AB node ownership and capture state per flavor** — answered: `C_AreaPoiInfo` + `AREA_POIS_UPDATED` works on all flavors incl. Era (see `Research/ab-node-state-research.md`); decode tables need one in-game `/dump` session — action items in the doc
 - [ ] **[AB-2] Node state strip** — show each base's owner (Alliance/Horde/contested) above its grid column
 - [ ] **[AB-3] Capture timers** — countdown until a contested base flips, surfaced on the strip
 - [ ] **[AB-4] Smart callout enrichment** — clicking a callout embeds live context ("INC ST — 4+, flips in 0:22")
