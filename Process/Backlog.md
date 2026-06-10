@@ -17,7 +17,7 @@ Import the battle-tested collaboration process, adapted for WoW addon
 development.
 
 - [x] **[PROC-1] Process docs** — `Process/WorkingWithClaude.md`, `SmokeChecklist.md`, this backlog, `Research/RESEARCH-PROCESS.md`, `Design/` folder, CLAUDE.md wiring
-- [ ] **[PROC-2] Baseline smoke pass** — run the full `SmokeChecklist.md` in-game on Classic Era to confirm the current build is GREEN before new work starts
+- [x] **[PROC-2] Baseline smoke pass** — full `SmokeChecklist.md` run in-game on Classic Era, all rows pass (2026-06-09; see `Design/current-ab-panel-2026-06-09.png`)
 
 ## Epic 1 — Battleground Awareness (foundation)
 
