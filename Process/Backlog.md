@@ -60,6 +60,8 @@ Directing players, not just announcing.
 - [ ] **[CMD-2] Opening split caller** — one click sends the standard opener ("5 ST / 5 BS / rest GM" style presets, editable)
 - [ ] **[CMD-3] Raid-marker integration** — mark FCs/targets when leader/assist
 - [ ] **[CMD-4] Custom callout editor** — per-cell message editing persisted in SavedVariables
+- [ ] **[CMD-5] Research: identifying the most dangerous enemy players** (requested 2026-06-09) — what signals exist per flavor to rank enemy threat: `UPDATE_BATTLEFIELD_SCORE`/`GetBattlefieldScore` (KBs/damage/healing by enemy name), class/spec detection, combat-log presence, healer identification; how other addons (BattlegroundEnemies, GladiatorlosSA-likes) do it; what's reachable on Classic Era
+- [ ] **[CMD-6] CC-priority callouts** — surface the top-threat enemies (healers first?) from CMD-5's provider and call them for crowd control / kill targets ("CC Kruelhand — healer"), reusing the one-implementation-many-surfaces callout path
 
 ## Epic 5 — Release Quality
 
