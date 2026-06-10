@@ -8,6 +8,15 @@
 
 ---
 
+> **UPDATE 2026-06-09 (post DBM-PvP review — see `dbm-pvp-review-reference.md`):**
+> the enUS patterns (pickup/drop/capture/return, F2/F3) don't need hand-capture
+> — DBM-PvP ships them in **9 locales** (`localization.en.lua:50-59`), so
+> multi-locale support becomes a port. Caveat: DBM marks the pickup/return/drop
+> patterns "Unused" (its FC system is a TODO), so they are **untested** — the
+> in-game action item becomes verifying those strings fire on Era as written.
+> Also confirmed: 12s flag respawn; DBM's FC-vulnerability timers are
+> retail-only, reinforcing F7's doubt about Era debuffs.
+
 ## Executive Summary
 
 WSG flag tracking has **two separable difficulty tiers**:

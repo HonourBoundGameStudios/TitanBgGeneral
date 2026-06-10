@@ -8,6 +8,15 @@
 
 ---
 
+> **UPDATE 2026-06-09 (post DBM-PvP review — see `dbm-pvp-review-reference.md`):**
+> the in-game capture is now **verification, not discovery**. Known from DBM's
+> shipped Era code: AB uiMapID = **1461**; the full Era `textureIndex` decode
+> table (node *and* state, fully locale-independent — supersedes the
+> `areaPoiID`-identity plan in F3); capture time on Era is **64s, not 60s**;
+> classic AB score widgets are **1893/1894**, with resource rates and the
+> bases-to-win math for [AB-5]. Friday's `/dump` session shrinks to: confirm
+> one node flip matches the decode table.
+
 ## Executive Summary
 
 AB node states (who owns Stables/Gold Mine/Blacksmith/Lumber Mill/Farm, and
