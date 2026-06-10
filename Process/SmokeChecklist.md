@@ -26,6 +26,7 @@
 | W4 | Click the **WSG** tab | WSG grid shows, centered; other grids hidden |
 | W5 | Click the **AV** tab | 7-column AV grid shows (DB, IW, SH, SF, TP, IB, FW) with icons rendering (no green squares); other grids hidden |
 | W6 | Window width | Fits the 7-column AV grid; three tabs share the row evenly |
+| W7 | Open the window while standing inside WSG / AB / AV | The matching tab is auto-selected (map-ID lookup, works on any client locale); outside a BG the AB default shows |
 
 ## Callouts
 

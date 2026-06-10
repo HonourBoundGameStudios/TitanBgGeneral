@@ -74,6 +74,14 @@ local avCols = {
 }
 local avRowActions = { "INC", "DEF", "HELP", "CAP", "GO", "RECAP" }
 
+-- Battleground detection by instance map ID (locale-independent; covers the
+-- classic maps and their retail variants — see Research/bg-detection-reference.md)
+local BG_BY_MAP_ID = {
+    [489]  = "WSG", [2106] = "WSG",
+    [529]  = "AB",  [2107] = "AB",  [2177] = "AB",
+    [30]   = "AV",  [2197] = "AV",
+}
+
 -- ******************************** PrepareBgGeneralMenu *******************************
 ---local Build the right-click dropdown menu (UIDropDownMenu scheme)
 local function PrepareBgGeneralMenu()
@@ -115,6 +123,17 @@ local function OnLoad(self)
             DisplayOnRightSide = false,
         },
     }
+end
+
+-- Returns "WSG" | "AB" | "AV" | nil — the single source of truth for
+-- "which battleground am I standing in" (tab auto-select, future advisor).
+local function GetActiveBg()
+    local inInstance, instanceType = IsInInstance()
+    if not (inInstance and instanceType == "pvp") then
+        return nil
+    end
+    local _, _, _, _, _, _, _, instanceMapID = GetInstanceInfo()
+    return BG_BY_MAP_ID[instanceMapID]
 end
 
 local function GetChatType()
@@ -385,14 +404,11 @@ local function ToggleBgGeneralScreen()
     tabWSG:SetScript("OnClick", function() selectTab(wsgContainer) end)
     tabAV:SetScript("OnClick", function() selectTab(avContainer) end)
 
-    -- Auto-select tab based on current zone
-    -- (locale-fragile; AWARE-2 replaces this with the instanceMapID lookup
-    -- from Research/bg-detection-reference.md)
-    local zone = GetRealZoneText() or GetZoneText() or ""
-    if zone:find("Warsong") then
-        selectTab(wsgContainer)
-    elseif zone:find("Alterac") then
-        selectTab(avContainer)
+    -- Auto-select the tab for the battleground we're standing in
+    local bgContainers = { AB = abContainer, WSG = wsgContainer, AV = avContainer }
+    local activeBg = GetActiveBg()
+    if activeBg and bgContainers[activeBg] then
+        selectTab(bgContainers[activeBg])
     end
 
     _G["BgGeneralWindow"] = frame
