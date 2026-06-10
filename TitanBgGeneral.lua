@@ -88,6 +88,17 @@ local BG_BY_MAP_ID = {
     [30]   = "AV",  [2197] = "AV",
 }
 
+-- Returns "WSG" | "AB" | "AV" | nil — the single source of truth for
+-- "which battleground am I standing in" (tab auto-select, button text, advisor).
+local function GetActiveBg()
+    local inInstance, instanceType = IsInInstance()
+    if not (inInstance and instanceType == "pvp") then
+        return nil
+    end
+    local _, _, _, _, _, _, _, instanceMapID = GetInstanceInfo()
+    return BG_BY_MAP_ID[instanceMapID]
+end
+
 -- ******************************** PrepareBgGeneralMenu *******************************
 ---local Build the right-click dropdown menu (UIDropDownMenu scheme)
 local function PrepareBgGeneralMenu()
@@ -111,6 +122,18 @@ local function PrepareBgGeneralMenu()
     TitanPanelRightClickMenu_AddHide(ADDON_ID, level)
 end
 
+-- ******************************** GetButtonText *******************************
+-- Titan bar text: the active BG while inside one (e.g. "AB"), empty otherwise
+-- so the bar stays icon-only out in the world. Label is hidden unless the
+-- player enables Titan's "Show label text".
+local function GetButtonText()
+    local bg = GetActiveBg()
+    if bg then
+        return "BG: ", TitanUtils_GetGreenText(bg)
+    end
+    return "", ""
+end
+
 -- ******************************** OnLoad *******************************
 ---local Initialize the addon when loaded
 local function OnLoad(self)
@@ -122,6 +145,7 @@ local function OnLoad(self)
         menuTextFunction = PrepareBgGeneralMenu,
         tooltipTitle = "Battleground General",
         tooltipTextFunction = GetTooltipText,
+        buttonTextFunction = GetButtonText,
         icon = "Interface\\Icons\\INV_BannerPVP_01",
         iconWidth = 16,
         controlVariables = {
@@ -139,17 +163,6 @@ local function OnLoad(self)
             DisplayOnRightSide = false,
         },
     }
-end
-
--- Returns "WSG" | "AB" | "AV" | nil — the single source of truth for
--- "which battleground am I standing in" (tab auto-select, future advisor).
-local function GetActiveBg()
-    local inInstance, instanceType = IsInInstance()
-    if not (inInstance and instanceType == "pvp") then
-        return nil
-    end
-    local _, _, _, _, _, _, _, instanceMapID = GetInstanceInfo()
-    return BG_BY_MAP_ID[instanceMapID]
 end
 
 local function GetChatType()
@@ -480,6 +493,12 @@ end
 local autoOpenFrame = CreateFrame("Frame")
 autoOpenFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 autoOpenFrame:SetScript("OnEvent", function()
+    -- Refresh the Titan bar text (BG abbreviation) on every zone transition,
+    -- independent of the auto-open option
+    if _G[TITAN_BUTTON_NAME] then
+        TitanPanelButton_UpdateButton(ADDON_ID)
+    end
+
     if not IsAutoOpenEnabled() then
         return
     end

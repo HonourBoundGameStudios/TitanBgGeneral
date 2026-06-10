@@ -47,3 +47,4 @@
 | T2 | Toggle Icon / Right Side from the menu | Button redraws immediately, setting persists across `/reload` |
 | T3 | Hide via the menu, re-enable from Titan's plugin list | Plugin returns without error |
 | T4 | Right-click menu → "Auto-open in battlegrounds" | Renders as a checkbox (checked by default); toggling it persists across `/reload` |
+| T5 | Titan bar text | Outside a BG: icon only, no text. Inside WSG/AB/AV: the BG abbreviation shows in green next to the icon |
