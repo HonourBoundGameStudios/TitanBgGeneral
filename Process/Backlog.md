@@ -40,7 +40,7 @@ From "callout buttons" to "the addon tells you what to call".
 
 ## Epic 3 — WSG Advisor
 
-- [ ] **[WSG-1] Research: flag state tracking per flavor** — flag pickup/drop/capture events, FC identification, `UPDATE_BATTLEFIELD_SCORE` flag carrier APIs
+- [x] **[WSG-1] Research: flag state tracking per flavor** — answered: events via `CHAT_MSG_BG_SYSTEM_*` pattern parsing (locale-dependent, enUS first); FC names only from pickup messages, aura check as locale-independent confirmation (see `Research/wsg-flag-state-research.md`; enUS patterns + aura IDs need in-game capture — action items in the doc)
 - [ ] **[WSG-2] FC status panel** — both flag carriers by name, with health when available
 - [ ] **[WSG-3] FC-aware callouts** — "EFC <name> LOW — kill at our tunnel" built from live state instead of static text
 - [ ] **[WSG-4] Flag respawn / debuff timers** — Focused Assault stacks countdown for endgame calls
