@@ -28,6 +28,18 @@ The addon should know where it is. Everything "advisor" builds on this.
 - [x] **[AWARE-3] Auto-open option** — `autoOpen` SavedVariable (default on) + Titan-menu checkbox + `PLAYER_ENTERING_WORLD` handler opens on BG entry / closes on leave; menu checkbox eye-verified in-game (smoke row **W8 — the in-BG half — pending**, rides with W7 on the next BG trip)
 - [x] **[AWARE-4] Context-aware Titan button text** — `GetButtonText()` via Titan's `buttonTextFunction`: green BG abbreviation on the bar inside WSG/AB/AV, icon-only outside; refreshed on `PLAYER_ENTERING_WORLD`. Clean load verified (smoke row **T5 in-BG half pending**, rides the BG-trip bundle)
 
+## Epic 1.5 — Threat Advisor (pulled forward 2026-06-10)
+
+Pulled ahead of the AB advisor per the market gap analysis
+(`Research/addon-market-gap-research.md`): no addon on any flavor ranks enemy
+threats or advises engage/avoid, the research is already done, it needs no
+node-state plumbing, and it helps every player every match. Gated only on the
+Era scoreboard `/dump` verify (Friday).
+
+- [x] **[CMD-5] Research: identifying the most dangerous enemy players** — answered: scoreboard-based ThreatProvider (`GetBattlefieldScore` damage/healing/classToken on a 10s ticker); healers inferred by class + healing ratio, no Era spec detection; includes the classic class rock/paper/scissors as shippable data (see `Research/enemy-threat-research.md` + `Research/classic-class-matchup-reference.md`; Era scoreboard shape needs Friday's `/dump` verify)
+- [ ] **[CMD-6] CC-priority callouts** — surface the top-threat enemies (healers first) from the ThreatProvider and call them for crowd control / kill targets ("CC Kruelhand — healer"), reusing the one-implementation-many-surfaces callout path
+- [ ] **[CMD-7] Engage/Avoid advisor window** (requested 2026-06-09) — a small per-player window in AB/WSG listing enemy players to **engage** vs **avoid**: ThreatProvider ranking × `MATCHUP[myClass][enemyClass]` from the matchup reference, healer flag overriding the matrix ("CC, don't chase"); updates on the scoreboard ticker
+
 ## Epic 2 — AB Advisor
 
 From "callout buttons" to "the addon tells you what to call".
@@ -54,15 +66,13 @@ User call: AV gets a panel too, alongside the WSG/AB advisor focus.
 
 ## Epic 4 — Command & Control
 
-Directing players, not just announcing.
+Directing players, not just announcing. (CMD-5/6/7 — the threat advisor —
+moved to Epic 1.5 on 2026-06-10, IDs kept.)
 
 - [ ] **[CMD-1] Role assignment board** — assign raid members to nodes/roles (O/D, FC escort) and broadcast the plan
 - [ ] **[CMD-2] Opening split caller** — one click sends the standard opener ("5 ST / 5 BS / rest GM" style presets, editable)
 - [ ] **[CMD-3] Raid-marker integration** — mark FCs/targets when leader/assist
 - [ ] **[CMD-4] Custom callout editor** — per-cell message editing persisted in SavedVariables
-- [x] **[CMD-5] Research: identifying the most dangerous enemy players** — answered: scoreboard-based ThreatProvider (`GetBattlefieldScore` damage/healing/classToken on a 10s ticker); healers inferred by class + healing ratio, no Era spec detection; includes the classic class rock/paper/scissors as shippable data (see `Research/enemy-threat-research.md` + `Research/classic-class-matchup-reference.md`; Era scoreboard shape needs Friday's `/dump` verify)
-- [ ] **[CMD-6] CC-priority callouts** — surface the top-threat enemies (healers first) from the ThreatProvider and call them for crowd control / kill targets ("CC Kruelhand — healer"), reusing the one-implementation-many-surfaces callout path
-- [ ] **[CMD-7] Engage/Avoid advisor window** (requested 2026-06-09) — a small per-player window in AB/WSG listing enemy players to **engage** vs **avoid**: ThreatProvider ranking × `MATCHUP[myClass][enemyClass]` from the matchup reference, healer flag overriding the matrix ("CC, don't chase"); updates on the scoreboard ticker
 
 ## Epic 5 — Release Quality
 
