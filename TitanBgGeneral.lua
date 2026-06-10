@@ -21,6 +21,12 @@ Titan_Debug[ADDON_ID].Flow   = false
 -- ******************************** Variables *******************************
 TitanBgGeneralSaved = TitanBgGeneralSaved or {}
 
+-- Default true; reads defensively so players upgrading from older versions
+-- (no autoOpen key saved) get the feature without a migration.
+local function IsAutoOpenEnabled()
+    return TitanBgGeneralSaved.autoOpen ~= false
+end
+
 local nodeIcons = {
     ["Stables"] = "Interface\\Icons\\Ability_Mount_RidingHorse",
     ["Gold Mine"] = "Interface\\Icons\\trade_mining",
@@ -91,6 +97,16 @@ local function PrepareBgGeneralMenu()
 
     TitanPanelRightClickMenu_AddToggleIcon(ADDON_ID, level)
     TitanPanelRightClickMenu_AddToggleRightSide(ADDON_ID, level)
+
+    local info = UIDropDownMenu_CreateInfo()
+    info.text = "Auto-open in battlegrounds"
+    info.isNotRadio = true
+    info.checked = IsAutoOpenEnabled()
+    info.func = function()
+        TitanBgGeneralSaved.autoOpen = not IsAutoOpenEnabled()
+    end
+    UIDropDownMenu_AddButton(info, level)
+
     TitanPanelRightClickMenu_AddSpacer()
     TitanPanelRightClickMenu_AddHide(ADDON_ID, level)
 end
@@ -280,11 +296,16 @@ local function BuildColGrid(parent, size, hGap, vGap, colDefs, rowActions)
     end
 end
 
--- ******************************** Toggle BG General Screen *******************************
-local function ToggleBgGeneralScreen()
+-- ******************************** Show / Hide / Toggle BG General Screen *******************************
+local function HideBgGeneralScreen()
     if _G["BgGeneralWindow"] then
         _G["BgGeneralWindow"]:Hide()
         _G["BgGeneralWindow"] = nil
+    end
+end
+
+local function ShowBgGeneralScreen()
+    if _G["BgGeneralWindow"] then
         return
     end
 
@@ -414,6 +435,14 @@ local function ToggleBgGeneralScreen()
     _G["BgGeneralWindow"] = frame
 end
 
+local function ToggleBgGeneralScreen()
+    if _G["BgGeneralWindow"] then
+        HideBgGeneralScreen()
+    else
+        ShowBgGeneralScreen()
+    end
+end
+
 ---local Handle events registered to plugin
 ---@param button string
 local function OnClick(_, button)
@@ -443,6 +472,24 @@ local function CreateTitanButton()
         TitanPanelButton_OnClick(self, button);
     end)
 end
+
+-- ******************************** Auto-open on BG entry *******************************
+-- Fires after every loading screen (login, /reload, zoning); GetInstanceInfo()
+-- is valid by then (see Research/bg-detection-reference.md). When the option is
+-- off, the window is left entirely alone.
+local autoOpenFrame = CreateFrame("Frame")
+autoOpenFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+autoOpenFrame:SetScript("OnEvent", function()
+    if not IsAutoOpenEnabled() then
+        return
+    end
+    if GetActiveBg() then
+        ShowBgGeneralScreen()
+        Titan_Debug.Out(ADDON_ID, "Events", "Auto-opened BgGeneralWindow on BG entry")
+    else
+        HideBgGeneralScreen()
+    end
+end)
 
 -- ******************************** Initialization *******************************
 -- Check if Titan Panel's global ID exists before attempting to create frames

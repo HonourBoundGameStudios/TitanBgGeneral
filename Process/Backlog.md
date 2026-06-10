@@ -25,7 +25,7 @@ The addon should know where it is. Everything "advisor" builds on this.
 
 - [x] **[AWARE-1] Research: detecting the active battleground per flavor** — `IsInInstance()` + `GetInstanceInfo()` instanceMapID lookup on `PLAYER_ENTERING_WORLD`; covers WSG/AB/AV incl. retail variants (see `Research/bg-detection-reference.md`; retail IDs need in-game `/dump` — action items in the doc)
 - [x] **[AWARE-2] Auto-select tab on zone-in** — `GetActiveBg()` (instanceMapID lookup) replaces the locale-fragile zone-name check; committed ahead of the in-game pass per user call — smoke row **W7 still needs verifying in AV/AB/WSG**, which also ticks the Era action items in `Research/bg-detection-reference.md`
-- [ ] **[AWARE-3] Auto-open option** — optionally open the window automatically when entering a supported BG, close on leave
+- [x] **[AWARE-3] Auto-open option** — `autoOpen` SavedVariable (default on) + Titan-menu checkbox + `PLAYER_ENTERING_WORLD` handler opens on BG entry / closes on leave; menu checkbox eye-verified in-game (smoke row **W8 — the in-BG half — pending**, rides with W7 on the next BG trip)
 - [ ] **[AWARE-4] Context-aware Titan button text** — show current BG (and later, score/flag state) on the Titan bar
 
 ## Epic 2 — AB Advisor

@@ -27,6 +27,7 @@
 | W5 | Click the **AV** tab | 7-column AV grid shows (DB, IW, SH, SF, TP, IB, FW) with icons rendering (no green squares); other grids hidden |
 | W6 | Window width | Fits the 7-column AV grid; three tabs share the row evenly |
 | W7 | Open the window while standing inside WSG / AB / AV | The matching tab is auto-selected (map-ID lookup, works on any client locale); outside a BG the AB default shows |
+| W8 | Enter a BG with auto-open enabled (default) | Window opens itself on the right tab; leaving the BG closes it. With auto-open unchecked, the window is left alone in both directions |
 
 ## Callouts
 
@@ -45,3 +46,4 @@
 | T1 | Right-click the Titan button | Context menu: Toggle Icon, Toggle Right Side, Hide |
 | T2 | Toggle Icon / Right Side from the menu | Button redraws immediately, setting persists across `/reload` |
 | T3 | Hide via the menu, re-enable from Titan's plugin list | Plugin returns without error |
+| T4 | Right-click menu → "Auto-open in battlegrounds" | Renders as a checkbox (checked by default); toggling it persists across `/reload` |
