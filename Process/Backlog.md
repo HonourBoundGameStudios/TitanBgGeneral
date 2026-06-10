@@ -23,8 +23,8 @@ development.
 
 The addon should know where it is. Everything "advisor" builds on this.
 
-- [ ] **[AWARE-1] Research: detecting the active battleground per flavor** — instance map IDs / `GetInstanceInfo()` / `C_PvP` availability on 11.x, 4.x, 1.x (see `Research/` once written)
-- [ ] **[AWARE-2] Auto-select tab on zone-in** — entering WSG selects the WSG tab, entering AB selects the AB tab
+- [x] **[AWARE-1] Research: detecting the active battleground per flavor** — `IsInInstance()` + `GetInstanceInfo()` instanceMapID lookup on `PLAYER_ENTERING_WORLD`; covers WSG/AB/AV incl. retail variants (see `Research/bg-detection-reference.md`; retail IDs need in-game `/dump` — action items in the doc)
+- [ ] **[AWARE-2] Auto-select tab on zone-in** — entering WSG/AB/AV selects the matching tab via `GetActiveBg()` (replaces the locale-fragile "zone name contains Warsong" check)
 - [ ] **[AWARE-3] Auto-open option** — optionally open the window automatically when entering a supported BG, close on leave
 - [ ] **[AWARE-4] Context-aware Titan button text** — show current BG (and later, score/flag state) on the Titan bar
 
@@ -45,6 +45,13 @@ From "callout buttons" to "the addon tells you what to call".
 - [ ] **[WSG-3] FC-aware callouts** — "EFC <name> LOW — kill at our tunnel" built from live state instead of static text
 - [ ] **[WSG-4] Flag respawn / debuff timers** — Focused Assault stacks countdown for endgame calls
 
+## Epic 3.5 — AV Panel (un-parked 2026-06-09)
+
+User call: AV gets a panel too, alongside the WSG/AB advisor focus.
+
+- [ ] **[AV-1] AV grid tab** — third tab alongside AB/WSG with location columns × action rows, same callout pattern
+- [ ] **[AV-2] AV-specific callouts** — tune locations/actions for AV's flow (towers, GYs, bosses) once AV-1 is played with
+
 ## Epic 4 — Command & Control
 
 Directing players, not just announcing.
@@ -63,6 +70,5 @@ Directing players, not just announcing.
 
 ## Parked / Ideas
 
-- AV tab (earlier idea — superseded in priority by the WSG/AB advisor focus)
 - Eye of the Storm / Twin Peaks / Deepwind Gorge support (retail)
 - Voice (TTS) callout playback for the leader
