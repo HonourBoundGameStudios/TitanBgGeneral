@@ -43,6 +43,31 @@ the table if needed and flips it GREEN (smoke rows TP1/TP2).
 - [ ] **[CMD-6] CC-priority callouts** — surface the top-threat enemies (healers first) from the ThreatProvider and call them for crowd control / kill targets ("CC Kruelhand — healer"), reusing the one-implementation-many-surfaces callout path
 - [ ] **[CMD-7] Engage/Avoid advisor window** (requested 2026-06-09) — a small per-player window in AB/WSG listing enemy players to **engage** vs **avoid**: ThreatProvider ranking × `MATCHUP[myClass][enemyClass]` from the matchup reference, healer flag overriding the matrix ("CC, don't chase"); updates on the scoreboard ticker
 
+## Epic 1.6 — Auto-Verification Recorder (2026-06-13)
+
+Every pending research gate (scoreboard shape, AB POI decode, WSG flag patterns,
+Era instance IDs) is blocked on manual `/dump` runs mid-match — unrealistic in
+practice. This epic bakes a passive recorder into the addon: events fire
+automatically, raw data lands in `TitanBgGeneralSaved.Analytics`, and
+`/bganalytics` prints a structured report after the session. One BG trip closes
+every open research gate simultaneously.
+
+Data sources investigated (2026-06-13): **Details!** exposes a real public API
+(`Details:GetCurrentCombat()` → per-player `actor.total` damage/healing) and
+works on Classic Era — the ThreatProvider should read from it when available.
+**DBM-PvP / Capping** HP-sync channels carry NPC/boss CIDs only, not player HP
+— not useful for player tracking. Node state and flag events are local-only;
+no addon broadcasts them. See `Design/README.md` for the `TBG` addon message
+channel design (player HP sharing between TBG users, inspired by DBM's
+healthTracker architecture).
+
+- [ ] **[VERIF-1] Recorder scaffold** — `TitanBgGeneralSaved.Analytics` slot + `/bganalytics` slash command that prints collected data; on/off gate; no impact on existing functionality
+- [ ] **[VERIF-2] Zone-in snapshot** — on `PLAYER_ENTERING_WORLD` in a BG: log `instanceMapID` (`select(8, GetInstanceInfo())`), `uiMapID` (`C_Map.GetBestMapForUnit`), timestamp; closes Era ID rows in `bg-detection-reference.md`; confirms smoke W7/W8/T5
+- [ ] **[VERIF-3] Scoreboard shape** — on first `UPDATE_BATTLEFIELD_SCORE` per session: dump full return shape of `GetBattlefieldScore(1)` (all N values, positions for faction/classToken/damageDone/healingDone); fixes or confirms `SCORE_POS` in `ThreatProvider`; closes smoke TP2; unblocks CMD-6/7
+- [ ] **[VERIF-4] AB POI logger** — on each `AREA_POIS_UPDATED` in AB: snapshot full POI list (`areaPoiID`, `name`, `textureIndex`) with timestamp and changed-entry diff; fills the Era decode table; unblocks AB-2/3/4/5
+- [ ] **[VERIF-5] WSG event capture** — on `CHAT_MSG_BG_SYSTEM_*` in WSG: log raw message + timestamp; on targeting a flag carrier: aura scan (`UnitAura` loop, capture name + spellID); confirms DBM's "Unused"-pattern caveat; unblocks WSG-2/3/4
+- [ ] **[VERIF-6] Details! enrichment** — if `Details` global present, read `Details:GetCurrentCombat()` in the ThreatProvider tick instead of (or to supplement) scoreboard damage/healing; optional, no hard dependency; degrades gracefully if Details! not installed
+
 ## Epic 2 — AB Advisor
 
 From "callout buttons" to "the addon tells you what to call".

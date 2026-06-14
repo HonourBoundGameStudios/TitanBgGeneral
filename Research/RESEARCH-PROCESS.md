@@ -10,6 +10,11 @@ Research is a project asset and should be treated with the same care as source
 code. This document describes how to decide whether research is needed, how to
 conduct it, and how to make it permanent, searchable, and actionable.
 
+**Scheduling (fleetcast 2026-06-11, for now): research spikes run at night** — execute them in the
+overnight session unless the user explicitly says otherwise; daytime spikes get queued in the backlog
+("queued for tonight"). Trivial look-ups that unblock the current item (a quick wowpedia API check) are
+not spikes — just answer them.
+
 For a WoW addon, research carries extra weight: the API is community-documented,
 changes per patch, and **differs across the three flavors this addon targets**
 (retail 11.x, Cataclysm Classic 4.x, Classic Era 1.x). An API that exists on
