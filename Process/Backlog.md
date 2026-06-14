@@ -61,12 +61,13 @@ no addon broadcasts them. See `Design/README.md` for the `TBG` addon message
 channel design (player HP sharing between TBG users, inspired by DBM's
 healthTracker architecture).
 
-- [ ] **[VERIF-1] Recorder scaffold** — `TitanBgGeneralSaved.Analytics` slot + `/bganalytics` slash command that prints collected data; on/off gate; no impact on existing functionality
+- [x] **[VERIF-1] Recorder scaffold** — `TitanBgGeneralSaved.Analytics` slot + `Analytics.Record(category, entry)` no-op-when-off helper for VERIF-2..6 + `/bganalytics [on|off|clear]` control surface; off by default, persists across `/reload`; no impact on existing functionality (GREEN 2026-06-14)
 - [ ] **[VERIF-2] Zone-in snapshot** — on `PLAYER_ENTERING_WORLD` in a BG: log `instanceMapID` (`select(8, GetInstanceInfo())`), `uiMapID` (`C_Map.GetBestMapForUnit`), timestamp; closes Era ID rows in `bg-detection-reference.md`; confirms smoke W7/W8/T5
 - [ ] **[VERIF-3] Scoreboard shape** — on first `UPDATE_BATTLEFIELD_SCORE` per session: dump full return shape of `GetBattlefieldScore(1)` (all N values, positions for faction/classToken/damageDone/healingDone); fixes or confirms `SCORE_POS` in `ThreatProvider`; closes smoke TP2; unblocks CMD-6/7
 - [ ] **[VERIF-4] AB POI logger** — on each `AREA_POIS_UPDATED` in AB: snapshot full POI list (`areaPoiID`, `name`, `textureIndex`) with timestamp and changed-entry diff; fills the Era decode table; unblocks AB-2/3/4/5
-- [ ] **[VERIF-5] WSG event capture** — on `CHAT_MSG_BG_SYSTEM_*` in WSG: log raw message + timestamp; on targeting a flag carrier: aura scan (`UnitAura` loop, capture name + spellID); confirms DBM's "Unused"-pattern caveat; unblocks WSG-2/3/4
+- [ ] **[VERIF-5] WSG event capture** — on `CHAT_MSG_BG_SYSTEM_*` in WSG: log raw message + timestamp; on targeting a flag carrier: aura scan (`UnitAura` loop, capture name + spellID); confirms DBM's "Unused"-pattern caveat; unblocks WSG-2/3/4. **Prefer the built-in disk logger** here: toggle `LoggingChat(true)` on WSG entry → `…/_classic_era_/Logs/WoWChatLog.txt`, which Claude reads/parses directly (same dev machine) instead of re-implementing chat capture in Lua
 - [ ] **[VERIF-6] Details! enrichment** — if `Details` global present, read `Details:GetCurrentCombat()` in the ThreatProvider tick instead of (or to supplement) scoreboard damage/healing; optional, no hard dependency; degrades gracefully if Details! not installed
+- [ ] **[VERIF-7] Developer panel + test buttons** (requested 2026-06-14) — a small dev/debug surface in TitanBgGeneral with one/two-press buttons driving the recorder + verification flows (enable, snapshot, dump, clear) so verification doesn't need typed slash commands mid-match; clear recorded data between test runs to keep the log small; pairs with Claude parsing the on-disk WoW logs for results
 
 ## Epic 2 — AB Advisor
 

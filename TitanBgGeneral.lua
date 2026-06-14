@@ -337,6 +337,89 @@ SlashCmdList["TITANBGGENERALTHREAT"] = function()
     print("|cffeda55fBG General|r " .. ThreatProvider.GetAdvisoryLine())
 end
 
+-- ******************************** Analytics Recorder (VERIF-1 scaffold) *******************************
+-- Passive in-game data recorder for closing the open research gates (scoreboard
+-- shape, AB POI decode, WSG flag patterns, Era instance IDs — Epic 1.6). Raw
+-- events land in TitanBgGeneralSaved.Analytics.log keyed by category;
+-- /bganalytics prints a per-category summary after the session. Off by default
+-- so it never records uninvited — flip with `/bganalytics on`. VERIF-2..6 feed
+-- it by calling Analytics.Record(category, entry) unconditionally on their
+-- events; Record is a no-op while disabled.
+local Analytics = {}
+do
+    -- Lazily ensure the SavedVariables slot exists, then return it. SavedVariables
+    -- are loaded before this file runs, so an upgrading player's existing data
+    -- (if any) is preserved; a fresh install gets the default shape here.
+    local function store()
+        local s = TitanBgGeneralSaved.Analytics
+        if type(s) ~= "table" then
+            s = { enabled = false, log = {} }
+            TitanBgGeneralSaved.Analytics = s
+        end
+        if type(s.log) ~= "table" then s.log = {} end
+        return s
+    end
+
+    function Analytics.IsEnabled()
+        return store().enabled == true
+    end
+
+    function Analytics.SetEnabled(on)
+        store().enabled = on and true or false
+    end
+
+    -- Append one timestamped entry under a named category. No-op when disabled
+    -- so callers (VERIF-2..6) can fire unconditionally on their events.
+    function Analytics.Record(category, entry)
+        if not Analytics.IsEnabled() then return end
+        local s = store()
+        local cat = s.log[category]
+        if not cat then
+            cat = {}
+            s.log[category] = cat
+        end
+        cat[#cat + 1] = { t = time(), data = entry }
+    end
+
+    function Analytics.Clear()
+        store().log = {}
+    end
+
+    function Analytics.PrintReport()
+        local s = store()
+        local state = s.enabled and "|cff00ff00on|r" or "|cffff0000off|r"
+        print("|cffeda55fBG General|r analytics recorder: " .. state)
+        local any = false
+        for category, entries in pairs(s.log) do
+            any = true
+            print(("  %s: %d entr%s"):format(category, #entries, #entries == 1 and "y" or "ies"))
+        end
+        if not any then
+            print("  no data recorded yet" .. (s.enabled and "" or " — enable with /bganalytics on"))
+        end
+        print("  commands: /bganalytics [on | off | clear]")
+    end
+end
+
+-- Recorder control surface (registered in CLAUDE.md globals): prints locally,
+-- never sends to chat. No arg = report; on/off toggles the gate; clear wipes.
+SLASH_TITANBGGENERALANALYTICS1 = "/bganalytics"
+SlashCmdList["TITANBGGENERALANALYTICS"] = function(msg)
+    local arg = (msg or ""):lower():match("^%s*(%S*)")
+    if arg == "on" then
+        Analytics.SetEnabled(true)
+        print("|cffeda55fBG General|r analytics recorder |cff00ff00enabled|r")
+    elseif arg == "off" then
+        Analytics.SetEnabled(false)
+        print("|cffeda55fBG General|r analytics recorder |cffff0000disabled|r")
+    elseif arg == "clear" then
+        Analytics.Clear()
+        print("|cffeda55fBG General|r analytics log cleared")
+    else
+        Analytics.PrintReport()
+    end
+end
+
 -- ******************************** Build AB Grid *******************************
 local function BuildAbGrid(parent, size, hGap, vGap)
     local cols, rows = 5, 6
