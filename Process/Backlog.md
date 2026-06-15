@@ -11,6 +11,10 @@ Basin**: fast callouts today, situational awareness and smart direction next.
 
 ---
 
+## Bugs
+
+- [x] **[BUG] Lua error on BG entry — `NewTicker` nil callback** (2026-06-14) — `ThreatProvider.Start` passed the global `RequestBattlefieldScoreData` straight to `C_Timer.NewTicker`; it was nil on the live Classic Era client → "bad argument #2 to '?'". First fired on the first live BG (WSG) since the threat skeleton landed. Fixed: resolve the request API at call time (global → `C_PvP` fallback), bail cleanly if absent, and wrap the ticker callback. Whether Era actually exposes the request API is a VERIF-3 question. (deployed 2026-06-14; confirm GREEN in WSG)
+
 ## Epic 0 — Process Bootstrap (2026-06-09)
 
 Import the battle-tested collaboration process, adapted for WoW addon

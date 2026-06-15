@@ -18,6 +18,12 @@ Titan_Debug[ADDON_ID] = {}
 Titan_Debug[ADDON_ID].Events = false
 Titan_Debug[ADDON_ID].Flow   = false
 
+-- DEV BUILD DEFAULT: always surface Lua errors (the in-game error popup) while
+-- the addon is under construction, so nothing fails silently mid-match. Set as
+-- early as possible to catch load-time errors too. ⚠ Strip this (or gate it
+-- behind a setting) before release — tracked in Epic 5 / SmokeChecklist.
+SetCVar("scriptErrors", "1")
+
 -- ******************************** Variables *******************************
 TitanBgGeneralSaved = TitanBgGeneralSaved or {}
 
@@ -309,13 +315,22 @@ do
 
     function ThreatProvider.Start()
         if ticker then return end
+        -- Resolve the scoreboard-request API at call time (BG entry, long after
+        -- load). Passing this straight to NewTicker crashed when it was nil
+        -- ("bad argument #2"); resolve + guard + wrap so it can't anymore.
+        local RequestScores = RequestBattlefieldScoreData
+            or (C_PvP and C_PvP.RequestBattlefieldScoreData)
+        if not RequestScores then
+            Titan_Debug.Out(ADDON_ID, "Events", "ThreatProvider: no RequestBattlefieldScoreData API on this flavor")
+            return
+        end
         if not eventFrame then
             eventFrame = CreateFrame("Frame")
             eventFrame:SetScript("OnEvent", Rebuild)
         end
         eventFrame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
-        ticker = C_Timer.NewTicker(POLL_SECONDS, RequestBattlefieldScoreData)
-        RequestBattlefieldScoreData()
+        ticker = C_Timer.NewTicker(POLL_SECONDS, function() RequestScores() end)
+        RequestScores()
         Titan_Debug.Out(ADDON_ID, "Events", "ThreatProvider started")
     end
 
