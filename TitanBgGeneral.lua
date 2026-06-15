@@ -416,6 +416,88 @@ do
     end
 end
 
+-- ******************************** Recorder capture hooks (VERIF-2/3) *******************************
+-- Feeds the Analytics log from live events while in a BG. Every capture routes
+-- through Analytics.Record (no-op when the recorder is off), so this is inert
+-- unless the user armed it (/bganalytics on or the dev panel). Lifecycle is
+-- driven from PLAYER_ENTERING_WORLD: Start on any pvp instance, Stop on leave.
+local Recorder = {}
+do
+    local frame, active, scoreboardCaptured
+
+    -- SavedVariables only serialize primitives; keep values storable.
+    local function storable(v)
+        local t = type(v)
+        if t == "string" or t == "number" or t == "boolean" then return v end
+        return tostring(v)
+    end
+
+    -- VERIF-2: locale-independent zone IDs on BG entry. uiMapID/instanceMapID can
+    -- be stale right after a loading screen, so this is called again at +3s.
+    local function CaptureZone(delayed)
+        if not Analytics.IsEnabled() then return end
+        local name, instanceType, _, _, _, _, _, instanceMapID = GetInstanceInfo()
+        Analytics.Record("zone", {
+            delayed       = delayed and true or false,
+            name          = name,
+            instanceType  = instanceType,
+            instanceMapID = instanceMapID,
+            uiMapID       = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player"),
+            recognizedBg  = GetActiveBg(),
+        })
+    end
+
+    -- VERIF-3: full positional return shape of GetBattlefieldScore(1), once per
+    -- session. select('#') preserves true arg count including embedded nils.
+    local function CaptureScoreboardShape(...)
+        local count = select("#", ...)
+        local values = {}
+        for i = 1, count do
+            local v = select(i, ...)
+            values[i] = { pos = i, type = type(v), value = storable(v) }
+        end
+        Analytics.Record("scoreboard_shape", {
+            numScores = GetNumBattlefieldScores and GetNumBattlefieldScores() or 0,
+            count     = count,
+            values    = values,
+        })
+    end
+
+    local function OnScoreUpdate()
+        if scoreboardCaptured or not Analytics.IsEnabled() then return end
+        if not GetBattlefieldScore or (GetNumBattlefieldScores and GetNumBattlefieldScores() < 1) then
+            return
+        end
+        scoreboardCaptured = true
+        CaptureScoreboardShape(GetBattlefieldScore(1))
+    end
+
+    -- Start/Stop are idempotent: PLAYER_ENTERING_WORLD fires several times per
+    -- match, but we only arm once per BG session (active guard).
+    function Recorder.Start()
+        if active then return end
+        active = true
+        scoreboardCaptured = false
+        if not frame then
+            frame = CreateFrame("Frame")
+            frame:SetScript("OnEvent", OnScoreUpdate)
+        end
+        frame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
+        CaptureZone(false)
+        C_Timer.After(3, function() if active then CaptureZone(true) end end)
+        -- Nudge a refresh if the flavor has the API; else the user opening the
+        -- scoreboard fires UPDATE_BATTLEFIELD_SCORE and we catch it then.
+        local req = RequestBattlefieldScoreData or (C_PvP and C_PvP.RequestBattlefieldScoreData)
+        if req then req() end
+    end
+
+    function Recorder.Stop()
+        if not active then return end
+        active = false
+        if frame then frame:UnregisterEvent("UPDATE_BATTLEFIELD_SCORE") end
+    end
+end
+
 -- ******************************** Dev Panel (VERIF-7) *******************************
 -- One/two-press control surface for the verification recorder, so a session
 -- never needs typed slash commands mid-match. Opened with `/bganalytics panel`.
@@ -893,6 +975,16 @@ autoOpenFrame:SetScript("OnEvent", function()
         ThreatProvider.Start()
     else
         ThreatProvider.Stop()
+    end
+
+    -- Recorder lifecycle (VERIF-2/3): arm on ANY pvp instance — including map IDs
+    -- GetActiveBg() doesn't recognise yet — so the zone snapshot can close the
+    -- Era ID gaps. Inert unless the recorder is armed (gated in Analytics.Record).
+    local inInstance, instanceType = IsInInstance()
+    if inInstance and instanceType == "pvp" then
+        Recorder.Start()
+    else
+        Recorder.Stop()
     end
 
     -- Dev panel: reopen across /reload if it was left open (position restored in Build)
