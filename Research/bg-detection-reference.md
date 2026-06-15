@@ -132,7 +132,7 @@ exactly as it does today.
 
 Run `/dump GetInstanceInfo()` (or `/dump select(8, GetInstanceInfo())`) inside:
 
-- [ ] WSG on **Classic Era** — expect `489`
+- [x] WSG on **Classic Era** — **confirmed `489`** (VERIF-2 recorder, 2026-06-14); also captured `uiMapID` **1460** (`C_Map.GetBestMapForUnit`)
 - [ ] AB on **Classic Era** — expect `529`
 - [ ] AV on **Classic Era** — expect `30`
 - [ ] WSG on **retail** — confirm `2106` (the Low-confidence entry)

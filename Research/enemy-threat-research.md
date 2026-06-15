@@ -2,9 +2,26 @@
 
 **Date:** 2026-06-09
 **Author:** Claude (research agent; in-game verification: Richard, pending)
-**Status:** Draft (Final once Friday's in-game action items are done)
-**Confidence:** Medium-High — the core signals are proven by shipped addons running on the user's Era client (Details, Spy) and by BattlegroundEnemies' multi-flavor source; exact Era scoreboard return positions/values not yet `/dump`-verified
-**Flavors verified:** none in-game yet (evidence is shipped addon source, including two addons installed and running in the user's Era client)
+**Status:** Draft — **partially verified in-game on Classic Era 2026-06-14** (see "In-game findings" below). The scoreboard *shape* is confirmed, but the **core damage/healing thesis is INVALIDATED on Era**.
+**Confidence:** Medium-High for the shape; the damage/healing ranking is now known-broken on Era.
+**Flavors verified:** Classic Era — `GetBattlefieldScore` return shape + WSG map IDs captured live via the VERIF-2/3 recorder (`TitanBgGeneralSaved.Analytics`).
+
+---
+
+## ⚠ In-game findings (Classic Era, 2026-06-14 — VERIF-2/3 recorder)
+
+`GetBattlefieldScore(i)` on Era returns **12 values**, positions:
+
+| 1 name | 2 killingBlows | 3 honorableKills | 4 deaths | 5 honorGained | 6 faction (0=Horde/1=Alliance) | 7 rank | 8 race | 9 class (localized) | 10 classToken | 11 damageDone | 12 healingDone |
+
+- ✅ `faction`=6, `classToken`=10, `damageDone`=11, `healingDone`=12 — the `ThreatProvider.SCORE_POS` was already correct.
+- 🔴 **`damageDone` and `healingDone` are always `0` on Era** — observed 0 in two snapshots including late-match (while `honorGained` grew 0→2376). Era's scoreboard does not track damage/healing (those columns arrived in Cataclysm). **This breaks the damage/healing-based ranking and the `healing > 1.5×damage` healer inference below.**
+
+**Revised Era direction (supersedes the damage/healing thesis for CMD-6/7):**
+- KILL priority → rank by `killingBlows` / `honorableKills` (both tracked).
+- Healer detection → **not possible from the scoreboard on Era**; fall back to the class prior (`HEALER_CAPABLE`) or read damage/healing from **Details!** (VERIF-6, combat-log based).
+
+The original scoreboard-damage/healing design below is retained for **retail/Cata** (where those fields populate) but is non-functional on Era.
 
 ---
 
