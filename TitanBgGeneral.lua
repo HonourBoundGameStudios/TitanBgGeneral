@@ -412,12 +412,148 @@ do
         if not any then
             print("  no data recorded yet" .. (s.enabled and "" or " — enable with /bganalytics on"))
         end
-        print("  commands: /bganalytics [on | off | clear]")
+        print("  commands: /bganalytics [on | off | clear | panel]")
+    end
+end
+
+-- ******************************** Dev Panel (VERIF-7) *******************************
+-- One/two-press control surface for the verification recorder, so a session
+-- never needs typed slash commands mid-match. Opened with `/bganalytics panel`.
+-- Buttons drive the Analytics module (reused, not reimplemented); future VERIF
+-- items add their capture/snapshot buttons here. Dev-only — deliberately not
+-- wired into the player-facing Titan menu, and held in a local so it adds no
+-- global. Native WoW look: DialogBox backdrop + UIPanelButtonTemplate buttons.
+local DevPanel = {}
+do
+    local frame, statusFS
+
+    -- Persisted under the already-registered TitanBgGeneralSaved table:
+    -- { point, relativePoint, xOfs, yOfs, shown } — position + last open/close state.
+    local function PanelStore()
+        local s = TitanBgGeneralSaved.devPanel
+        if type(s) ~= "table" then
+            s = {}
+            TitanBgGeneralSaved.devPanel = s
+        end
+        return s
+    end
+
+    local function TotalEntries()
+        local s = TitanBgGeneralSaved.Analytics
+        local total = 0
+        if s and type(s.log) == "table" then
+            for _, entries in pairs(s.log) do total = total + #entries end
+        end
+        return total
+    end
+
+    local function Refresh()
+        if not frame then return end
+        local on = Analytics.IsEnabled()
+        statusFS:SetText(("Recorder: %s     Entries: %d"):format(
+            on and "|cff00ff00ON|r" or "|cffff0000OFF|r", TotalEntries()))
+    end
+
+    local function Build()
+        local pad, btnW, btnH, gap = 12, 180, 24, 6
+        local headerH = 16 + 6 + 14 + 10  -- title + gap + status + gap
+
+        frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        frame:SetSize(btnW + pad * 2, 100) -- height finalised after layout
+        frame:SetFrameStrata("DIALOG")
+        frame:SetMovable(true)
+        frame:EnableMouse(true)
+        frame:RegisterForDrag("LeftButton")
+        frame:SetScript("OnDragStart", frame.StartMoving)
+        frame:SetScript("OnDragStop", function(self)
+            self:StopMovingOrSizing()
+            local point, _, relativePoint, xOfs, yOfs = self:GetPoint()
+            local s = PanelStore()
+            s.point, s.relativePoint, s.xOfs, s.yOfs = point, relativePoint, xOfs, yOfs
+        end)
+        -- Persist open/close so a /reload restores the panel as the user left it
+        frame:SetScript("OnShow", function() PanelStore().shown = true end)
+        frame:SetScript("OnHide", function() PanelStore().shown = false end)
+
+        -- Restore saved position, else center
+        local pos = PanelStore()
+        if pos.point then
+            frame:ClearAllPoints()
+            frame:SetPoint(pos.point, UIParent, pos.relativePoint, pos.xOfs, pos.yOfs)
+        else
+            frame:SetPoint("CENTER")
+        end
+        frame:SetBackdrop({
+            bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 4,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        frame:SetBackdropColor(0, 0, 0, 1)
+
+        local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", frame, "TOP", 0, -pad)
+        title:SetText("|cffeda55fBG General — Dev|r")
+
+        statusFS = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        statusFS:SetPoint("TOP", title, "BOTTOM", 0, -6)
+
+        local y = -(pad + headerH)
+        local function AddButton(text, onClick)
+            local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+            b:SetSize(btnW, btnH)
+            b:SetPoint("TOP", frame, "TOP", 0, y)
+            b:SetText(text)
+            b:SetScript("OnClick", onClick)
+            y = y - (btnH + gap)
+            return b
+        end
+
+        -- Toggles the recorder gate (same as /bganalytics on|off); state shown in the status line
+        AddButton("Toggle BG Analytics", function()
+            Analytics.SetEnabled(not Analytics.IsEnabled())
+            Refresh()
+        end)
+        AddButton("Clear Log",     function() Analytics.Clear(); Refresh() end)
+        AddButton("Print Report",  function() Analytics.PrintReport() end)
+        AddButton("Reload UI",     function() ReloadUI() end)
+        AddButton("Close",         function() frame:Hide() end)
+
+        frame:SetHeight(-y + pad - gap)
+        -- Frame is created already shown, before OnShow was attached, so record it
+        PanelStore().shown = true
+    end
+
+    function DevPanel.Toggle()
+        if not frame then
+            Build()
+            Refresh()
+            return -- Build leaves the frame shown
+        end
+        if frame:IsShown() then
+            frame:Hide()
+        else
+            frame:Show()
+            Refresh()
+        end
+    end
+
+    -- Called on load/zone: reopen the panel only if it was open at last /reload
+    function DevPanel.RestoreIfOpen()
+        if not PanelStore().shown then return end
+        if not frame then
+            Build()
+            Refresh()
+        else
+            frame:Show()
+            Refresh()
+        end
     end
 end
 
 -- Recorder control surface (registered in CLAUDE.md globals): prints locally,
--- never sends to chat. No arg = report; on/off toggles the gate; clear wipes.
+-- never sends to chat. No arg = report; on/off toggles the gate; clear wipes;
+-- panel opens the dev button panel (VERIF-7).
 SLASH_TITANBGGENERALANALYTICS1 = "/bganalytics"
 SlashCmdList["TITANBGGENERALANALYTICS"] = function(msg)
     local arg = (msg or ""):lower():match("^%s*(%S*)")
@@ -430,6 +566,8 @@ SlashCmdList["TITANBGGENERALANALYTICS"] = function(msg)
     elseif arg == "clear" then
         Analytics.Clear()
         print("|cffeda55fBG General|r analytics log cleared")
+    elseif arg == "panel" then
+        DevPanel.Toggle()
     else
         Analytics.PrintReport()
     end
@@ -756,6 +894,9 @@ autoOpenFrame:SetScript("OnEvent", function()
     else
         ThreatProvider.Stop()
     end
+
+    -- Dev panel: reopen across /reload if it was left open (position restored in Build)
+    DevPanel.RestoreIfOpen()
 
     if not IsAutoOpenEnabled() then
         return
