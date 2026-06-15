@@ -630,6 +630,19 @@ end
 local DevPanel = {}
 do
     local frame, statusFS
+    local leds = {}  -- key -> { led, fs }
+
+    local LED_ON  = "Interface\\COMMON\\Indicator-Green"
+    local LED_OFF = "Interface\\COMMON\\Indicator-Gray"
+
+    -- Live LED indicators: which capture streams are on / have data.
+    local LED_DEFS = {
+        { key = "rec",   label = "REC",   tip = "Recorder gate — green when analytics recording is enabled (/bganalytics on or the Toggle button)." },
+        { key = "bg",    label = "BG",    tip = "Armed — green while you're inside a battleground (pvp instance); the recorder is live." },
+        { key = "zone",  label = "ZONE",  tip = "Zone snapshot captured — instanceMapID + uiMapID logged for this match (VERIF-2)." },
+        { key = "score", label = "SCORE", tip = "Scoreboard roster captured — full player list with classToken + faction. Open the scoreboard in-BG to populate (VERIF-3 / CMD-8)." },
+        { key = "cleu",  label = "CLEU",  tip = "Combat-log threat captured — real damage/healing of nearby enemies; healers self-flag via heal events (CMD-8)." },
+    }
 
     -- Persisted under the already-registered TitanBgGeneralSaved table:
     -- { point, relativePoint, xOfs, yOfs, shown } — position + last open/close state.
@@ -651,20 +664,43 @@ do
         return total
     end
 
+    -- Which LEDs are "active" right now (live recorder state + captured data).
+    local function LedState()
+        local s = TitanBgGeneralSaved.Analytics
+        local log = (s and type(s.log) == "table") and s.log or {}
+        local function has(cat) local e = log[cat]; return e ~= nil and #e > 0 end
+        return {
+            rec   = Analytics.IsEnabled(),
+            bg    = Recorder.IsActive and Recorder.IsActive() or false,
+            zone  = has("zone"),
+            score = has("scoreboard_roster") or has("scoreboard_shape"),
+            cleu  = has("cleu_threat"),
+        }
+    end
+
     local function Refresh()
         if not frame then return end
-        local on = Analytics.IsEnabled()
-        statusFS:SetText(("Recorder: %s     Entries: %d"):format(
-            on and "|cff00ff00ON|r" or "|cffff0000OFF|r", TotalEntries()))
+        statusFS:SetText(("Entries: %d"):format(TotalEntries())) -- recorder state now shown by the REC LED
+        local st = LedState()
+        for _, def in ipairs(LED_DEFS) do
+            local p = leds[def.key]
+            if p then
+                local lit = st[def.key]
+                p.led:SetTexture(lit and LED_ON or LED_OFF)
+                p.led:SetAlpha(lit and 1 or 0.5)
+                p.fs:SetTextColor(lit and 1 or 0.55, lit and 1 or 0.55, lit and 1 or 0.55)
+            end
+        end
     end
 
     local function Build()
         local pad, btnW, btnH, gap = 12, 180, 24, 6
-        local headerH = 16 + 6 + 14 + 10  -- title + gap + status + gap
+        local headerH = 16 + 6 + 14 + 6 + 25 + 10  -- title + status + LED row + gaps
 
         frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
         frame:SetSize(btnW + pad * 2, 100) -- height finalised after layout
-        frame:SetFrameStrata("DIALOG")
+        frame:SetFrameStrata("FULLSCREEN_DIALOG") -- sit above trackers/other addons
+        frame:SetToplevel(true)
         frame:SetMovable(true)
         frame:EnableMouse(true)
         frame:RegisterForDrag("LeftButton")
@@ -701,6 +737,44 @@ do
 
         statusFS = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         statusFS:SetPoint("TOP", title, "BOTTOM", 0, -6)
+
+        -- Live LED indicator row (glowing dot + tiny label), centered under status
+        local cellW, ledSize, cellGap = 34, 14, 2
+        local rowW = #LED_DEFS * cellW + (#LED_DEFS - 1) * cellGap
+        local ledRow = CreateFrame("Frame", nil, frame)
+        ledRow:SetSize(rowW, ledSize + 11)
+        ledRow:SetPoint("TOP", statusFS, "BOTTOM", 0, -6)
+        for i, def in ipairs(LED_DEFS) do
+            local cell = CreateFrame("Frame", nil, ledRow)
+            cell:SetSize(cellW, ledSize + 11)
+            cell:SetPoint("LEFT", ledRow, "LEFT", (i - 1) * (cellW + cellGap), 0)
+            cell:EnableMouse(true)
+            local led = cell:CreateTexture(nil, "ARTWORK")
+            led:SetSize(ledSize, ledSize)
+            led:SetPoint("TOP", cell, "TOP", 0, 0)
+            led:SetTexture(LED_OFF)
+            local fs = cell:CreateFontString(nil, "OVERLAY", "GameFontNormalTiny")
+            fs:SetPoint("TOP", led, "BOTTOM", 0, -1)
+            fs:SetText(def.label)
+            leds[def.key] = { led = led, fs = fs }
+
+            cell:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine(def.label, 1, 0.82, 0)
+                GameTooltip:AddLine(def.tip, 1, 1, 1, true)
+                local lit = LedState()[def.key]
+                GameTooltip:AddLine(lit and "Active" or "Inactive",
+                    lit and 0.1 or 0.7, lit and 1 or 0.7, lit and 0.1 or 0.7)
+                GameTooltip:Show()
+            end)
+            cell:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
+
+        -- Refresh the status line + pills live (~1s) while the panel is shown
+        frame:SetScript("OnUpdate", function(self, elapsed)
+            self._acc = (self._acc or 0) + elapsed
+            if self._acc >= 1 then self._acc = 0; Refresh() end
+        end)
 
         local y = -(pad + headerH)
         local function AddButton(text, onClick)
