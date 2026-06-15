@@ -23,6 +23,17 @@
 
 The original scoreboard-damage/healing design below is retained for **retail/Cata** (where those fields populate) but is non-functional on Era.
 
+## 🔬 Learned from Spy (installed Era addon, source-reviewed 2026-06-14)
+
+Spy ("detects nearby enemy players") is the reference implementation for the
+exact gap Era's scoreboard leaves. Techniques to port for **CMD-8**:
+
+- **`GetPlayerInfoByGUID(guid)` → `localizedClass, classToken("WARRIOR"), localizedRace, raceFile, sex, name`** — the locale-independent class lookup. Prefer it over parsing localized `UnitClass` strings. GUIDs come from CLEU, nameplates, or target/mouseover.
+- **CLEU hostile-player filter:** `bit.band(srcFlags, COMBATLOG_OBJECT_REACTION_HOSTILE) ~= 0` **and** `strsub(guid,1,6) == "Player"`. This is the real-time *proximity/activity* layer the scoreboard can't give — who is near and fighting **now**.
+- **Healer detection on Era (the CMD-8 fix):** the scoreboard's `healingDone` is always 0, but **CLEU heal events are not**. Watch `SPELL_HEAL` / `SPELL_PERIODIC_HEAL` from a hostile player source → that GUID is actively healing → flag healer. Combine with the class prior. This replaces the dead `healing>1.5×damage` rule. (Spy generalises this via `Spy_AbilityList[spellID] → {class,…}`, inferring class from cast spells; we only need a small heal-spellID set for the healer flag.)
+- **Multi-source fusion:** Spy registers `PLAYER_TARGET_CHANGED`, `UPDATE_MOUSEOVER_UNIT`, `NAME_PLATE_UNIT_ADDED/REMOVED`, `COMBAT_LOG_EVENT_UNFILTERED`, `UNIT_PET`. For us: **scoreboard = full roster + classTokens** (proven); **CLEU/nameplates = who's near & active**. Different layers — combine, don't pick one.
+- **Porting gotcha:** Spy's dest-unit branch checks `dstType == "player"` (lowercase) while GUIDs are `"Player"` (capital), so that branch is effectively dead code — use the capital form (as its source branch correctly does).
+
 ---
 
 > Builds on `dbm-pvp-review-reference.md` (crowd-sourced HP-sync architecture —
