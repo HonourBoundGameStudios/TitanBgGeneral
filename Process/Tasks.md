@@ -6,8 +6,9 @@ fixes. Convention: the user says **`Task: …`** and it lands here (or just gets
 - **Ephemeral & low-ceremony.** No ids, no estimates. Check off and delete freely.
 - **Graduate when it grows teeth.** If a task turns out multi-step, risky, or worth remembering, promote it
   to a real item in `Backlog.md`.
-- Still follows the Process when it touches code (RED → GREEN → COMMIT; for this addon, verify in-game via
-  `deploy.ps1` → `/reload`) — "lightweight" is about *tracking*, not about skipping verification.
+- Still follows the **full Process cycle** when it touches code (RED → GREEN → REVIEW → UX REVIEW → COMMIT;
+  for this addon UX REVIEW = verify in-game via `deploy.ps1` → `/reload`) — "lightweight" is about *tracking*,
+  never about skipping cycle steps (REVIEW and UX REVIEW included).
 
 ## Open
 

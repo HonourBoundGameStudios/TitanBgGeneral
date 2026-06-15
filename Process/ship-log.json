@@ -1,0 +1,10 @@
+{
+  "$schema": "fleet.ship-log/v1",
+  "ship": "TitanBgGeneral",
+  "version": null,
+  "branch": "develop",
+  "lastRelease": null,
+  "health": { "tests": "n/a (WoW addon — verified in-game)", "ci": null, "openBugs": null },
+  "announcements": [],
+  "openBugs": []
+}
