@@ -396,6 +396,13 @@ do
         cat[#cat + 1] = { t = time(), data = entry }
     end
 
+    -- Replace a category with a single latest entry — for snapshot-style data
+    -- (full roster, CLEU threat aggregate) that should stay one row, not grow.
+    function Analytics.ReplaceLatest(category, entry)
+        if not Analytics.IsEnabled() then return end
+        store().log[category] = { { t = time(), data = entry } }
+    end
+
     function Analytics.Clear()
         store().log = {}
     end
@@ -423,7 +430,16 @@ end
 -- driven from PLAYER_ENTERING_WORLD: Start on any pvp instance, Stop on leave.
 local Recorder = {}
 do
-    local frame, active, scoreboardCaptured
+    local frame, active, scoreboardCaptured, snapshotTicker
+    local threat = {}  -- [name] = { name, classToken, damage, healing, heals }
+
+    -- Verified Era scoreboard positions (VERIF-3, 2026-06-14). damageDone(11)/
+    -- healingDone(12) exist but are always 0 on Era — real numbers come from CLEU.
+    local SB = {
+        name = 1, killingBlows = 2, honorableKills = 3, deaths = 4, honorGained = 5,
+        faction = 6, rank = 7, race = 8, classLoc = 9, classToken = 10,
+        damageDone = 11, healingDone = 12,
+    }
 
     -- SavedVariables only serialize primitives; keep values storable.
     local function storable(v)
@@ -463,13 +479,88 @@ do
         })
     end
 
-    local function OnScoreUpdate()
-        if scoreboardCaptured or not Analytics.IsEnabled() then return end
-        if not GetBattlefieldScore or (GetNumBattlefieldScores and GetNumBattlefieldScores() < 1) then
-            return
+    -- CMD-8: decode every scoreboard row into a named-field roster (the full
+    -- player list with locale-independent classToken + numeric faction).
+    local function CaptureRoster()
+        local n = GetNumBattlefieldScores and GetNumBattlefieldScores() or 0
+        if n < 1 or not GetBattlefieldScore then return end
+        local players = {}
+        for i = 1, n do
+            local r = { GetBattlefieldScore(i) }
+            local nm = r[SB.name]
+            if nm then
+                players[#players + 1] = {
+                    name           = nm,
+                    classToken     = type(r[SB.classToken]) == "string" and r[SB.classToken] or nil,
+                    faction        = tonumber(r[SB.faction]),
+                    killingBlows   = tonumber(r[SB.killingBlows]) or 0,
+                    honorableKills = tonumber(r[SB.honorableKills]) or 0,
+                    deaths         = tonumber(r[SB.deaths]) or 0,
+                    damageDone     = tonumber(r[SB.damageDone]) or 0,  -- 0 on Era
+                    healingDone    = tonumber(r[SB.healingDone]) or 0, -- 0 on Era
+                }
+            end
         end
-        scoreboardCaptured = true
-        CaptureScoreboardShape(GetBattlefieldScore(1))
+        Analytics.ReplaceLatest("scoreboard_roster", {
+            myFaction = (UnitFactionGroup("player") == "Horde") and 0 or 1,
+            numScores = n,
+            players   = players,
+        })
+    end
+
+    -- CMD-8 / Spy technique: real damage & healing around the player from the
+    -- combat log (the Era scoreboard reports 0). Aggregates per hostile player;
+    -- heal events also flag healers, which the scoreboard can't on Era.
+    local HOSTILE = COMBATLOG_OBJECT_REACTION_HOSTILE
+    local function enemyRec(name, guid)
+        local e = threat[name]
+        if not e then
+            local _, classToken = GetPlayerInfoByGUID(guid)
+            e = { name = name, classToken = classToken, damage = 0, healing = 0, heals = 0 }
+            threat[name] = e
+        end
+        return e
+    end
+
+    local function CleuEvent()
+        if not Analytics.IsEnabled() then return end
+        local info = { CombatLogGetCurrentEventInfo() }
+        local sub, srcGUID, srcName, srcFlags = info[2], info[4], info[5], info[6]
+        if not (srcGUID and srcName and srcFlags) then return end
+        if bit.band(srcFlags, HOSTILE) ~= HOSTILE then return end
+        if strsub(srcGUID, 1, 6) ~= "Player" then return end -- enemy players only
+        if sub == "SWING_DAMAGE" then
+            local amt = tonumber(info[12]) or 0
+            if amt > 0 then local e = enemyRec(srcName, srcGUID); e.damage = e.damage + amt end
+        elseif sub == "SPELL_DAMAGE" or sub == "SPELL_PERIODIC_DAMAGE" or sub == "RANGE_DAMAGE" then
+            local amt = tonumber(info[15]) or 0
+            if amt > 0 then local e = enemyRec(srcName, srcGUID); e.damage = e.damage + amt end
+        elseif sub == "SPELL_HEAL" or sub == "SPELL_PERIODIC_HEAL" then
+            local e = enemyRec(srcName, srcGUID)
+            e.heals = e.heals + 1
+            local amt = (tonumber(info[15]) or 0) - (tonumber(info[16]) or 0) -- effective heal
+            if amt > 0 then e.healing = e.healing + amt end
+        end
+    end
+
+    -- Snapshot the live CLEU aggregate into SavedVariables (replace-latest).
+    local function CaptureThreat()
+        local list = {}
+        for _, e in pairs(threat) do list[#list + 1] = e end
+        if #list > 0 then Analytics.ReplaceLatest("cleu_threat", { players = list }) end
+    end
+
+    local function OnEvent(_, event)
+        if event == "UPDATE_BATTLEFIELD_SCORE" then
+            if not (GetNumBattlefieldScores and GetNumBattlefieldScores() >= 1) then return end
+            if not scoreboardCaptured and Analytics.IsEnabled() then
+                scoreboardCaptured = true
+                CaptureScoreboardShape(GetBattlefieldScore(1))
+            end
+            CaptureRoster()
+        elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
+            CleuEvent()
+        end
     end
 
     -- Start/Stop are idempotent: PLAYER_ENTERING_WORLD fires several times per
@@ -478,6 +569,7 @@ do
         if active then return end
         active = true
         scoreboardCaptured = false
+        wipe(threat)
 
         -- Fresh log per match: clear on a genuine new BG entry, but NOT on a
         -- /reload while still in the same match (that would wipe the captures we
@@ -496,21 +588,31 @@ do
 
         if not frame then
             frame = CreateFrame("Frame")
-            frame:SetScript("OnEvent", OnScoreUpdate)
+            frame:SetScript("OnEvent", OnEvent)
         end
         frame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
+        frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
         CaptureZone(false)
         C_Timer.After(3, function() if active then CaptureZone(true) end end)
+        -- Periodically flush the CLEU aggregate so a /reload has it on hand
+        snapshotTicker = C_Timer.NewTicker(5, CaptureThreat)
         -- Nudge a refresh if the flavor has the API; else the user opening the
         -- scoreboard fires UPDATE_BATTLEFIELD_SCORE and we catch it then.
         local req = RequestBattlefieldScoreData or (C_PvP and C_PvP.RequestBattlefieldScoreData)
         if req then req() end
     end
 
+    function Recorder.IsActive() return active == true end
+
     function Recorder.Stop()
         if not active then return end
         active = false
-        if frame then frame:UnregisterEvent("UPDATE_BATTLEFIELD_SCORE") end
+        if frame then
+            frame:UnregisterEvent("UPDATE_BATTLEFIELD_SCORE")
+            frame:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+        end
+        if snapshotTicker then snapshotTicker:Cancel(); snapshotTicker = nil end
+        CaptureThreat() -- final snapshot before the marker drops
         -- Drop the match marker so re-entering the same BG counts as a new match
         if TitanBgGeneralSaved.Analytics then
             TitanBgGeneralSaved.Analytics.activeMatchMap = nil
