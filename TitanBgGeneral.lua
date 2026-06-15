@@ -478,6 +478,22 @@ do
         if active then return end
         active = true
         scoreboardCaptured = false
+
+        -- Fresh log per match: clear on a genuine new BG entry, but NOT on a
+        -- /reload while still in the same match (that would wipe the captures we
+        -- reload to read). Distinguish via a persisted match marker. The marker
+        -- is nilled in Stop on leaving, so the next entry (even same map) clears.
+        local _, _, _, _, _, _, _, instanceMapID = GetInstanceInfo()
+        if Analytics.IsEnabled() then
+            local s = TitanBgGeneralSaved.Analytics
+            if not s or s.activeMatchMap ~= instanceMapID then
+                Analytics.Clear()
+            end
+        end
+        if TitanBgGeneralSaved.Analytics then
+            TitanBgGeneralSaved.Analytics.activeMatchMap = instanceMapID
+        end
+
         if not frame then
             frame = CreateFrame("Frame")
             frame:SetScript("OnEvent", OnScoreUpdate)
@@ -495,6 +511,10 @@ do
         if not active then return end
         active = false
         if frame then frame:UnregisterEvent("UPDATE_BATTLEFIELD_SCORE") end
+        -- Drop the match marker so re-entering the same BG counts as a new match
+        if TitanBgGeneralSaved.Analytics then
+            TitanBgGeneralSaved.Analytics.activeMatchMap = nil
+        end
     end
 end
 
