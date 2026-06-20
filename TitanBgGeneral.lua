@@ -407,6 +407,30 @@ do
         store().log = {}
     end
 
+    -- Live disk export. WoW Lua is sandboxed (no io.*) and SavedVariables only
+    -- flush on /reload or logout — but the chat log (LoggingChat) writes to
+    -- Logs/WoWChatLog.txt in near-real-time. So with live export on we enable
+    -- chat logging and emit compact, prefixed lines a tool reads WITHOUT a
+    -- reload. Low frequency by design (state changes + summaries, never the
+    -- per-tick roster) so it doesn't flood the chat frame.
+    local LIVE_PREFIX = "[TBG]"
+    function Analytics.IsLiveExport()
+        return store().liveExport == true
+    end
+    function Analytics.SetLiveExport(on)
+        on = on and true or false
+        store().liveExport = on
+        -- Turning it on also turns on chat logging (the disk channel); we never
+        -- turn LoggingChat off — the player may rely on it for their own logs.
+        if on and LoggingChat and not LoggingChat() then LoggingChat(true) end
+    end
+    -- Emit one line to the chat log (via the default frame, which IS written to
+    -- WoWChatLog.txt). No-op unless live export is armed.
+    function Analytics.Emit(line)
+        if not Analytics.IsLiveExport() then return end
+        print(LIVE_PREFIX .. " " .. line)
+    end
+
     function Analytics.PrintReport()
         local s = store()
         local state = s.enabled and "|cff00ff00on|r" or "|cffff0000off|r"
@@ -430,8 +454,9 @@ end
 -- driven from PLAYER_ENTERING_WORLD: Start on any pvp instance, Stop on leave.
 local Recorder = {}
 do
-    local frame, active, scoreboardCaptured, snapshotTicker
+    local frame, active, scoreboardCaptured, snapshotTicker, poiBaselined
     local threat = {}  -- [name] = { name, classToken, damage, healing, heals }
+    local lastPoi = {} -- [areaPoiID] = last-seen textureIndex, for change diffing
 
     -- Verified Era scoreboard positions (VERIF-3, 2026-06-14). damageDone(11)/
     -- healingDone(12) exist but are always 0 on Era — real numbers come from CLEU.
@@ -453,14 +478,19 @@ do
     local function CaptureZone(delayed)
         if not Analytics.IsEnabled() then return end
         local name, instanceType, _, _, _, _, _, instanceMapID = GetInstanceInfo()
+        local uiMapID = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
         Analytics.Record("zone", {
             delayed       = delayed and true or false,
             name          = name,
             instanceType  = instanceType,
             instanceMapID = instanceMapID,
-            uiMapID       = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player"),
+            uiMapID       = uiMapID,
             recognizedBg  = GetActiveBg(),
         })
+        if not delayed then
+            Analytics.Emit(("zone %s bg=%s map=%s/%s"):format(
+                tostring(name), tostring(GetActiveBg()), tostring(instanceMapID), tostring(uiMapID)))
+        end
     end
 
     -- VERIF-3: full positional return shape of GetBattlefieldScore(1), once per
@@ -550,6 +580,57 @@ do
         if #list > 0 then Analytics.ReplaceLatest("cleu_threat", { players = list }) end
     end
 
+    -- VERIF-4: AB node-state decode capture. On AREA_POIS_UPDATED in AB, read the
+    -- map's POI list via C_AreaPoiInfo and log areaPoiID + name + textureIndex.
+    -- Nodes are identified by areaPoiID (never the localized name); textureIndex
+    -- encodes owner + assault state, which we decode from the captured diffs.
+    -- The first capture logs the full baseline; later captures log only entries
+    -- whose textureIndex changed — i.e. the state transitions to decode. Fills
+    -- the Era decode table that unblocks AB-2..5.
+    local function CapturePOIs()
+        if not Analytics.IsEnabled() then return end
+        if GetActiveBg() ~= "AB" then return end
+        if not (C_AreaPoiInfo and C_AreaPoiInfo.GetAreaPOIForMap and C_AreaPoiInfo.GetAreaPOIInfo) then return end
+        local uiMapID = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+        if not uiMapID then return end
+        local ids = C_AreaPoiInfo.GetAreaPOIForMap(uiMapID)
+        if not ids then return end
+        local list, changed = {}, {}
+        for _, poiID in ipairs(ids) do
+            local info = C_AreaPoiInfo.GetAreaPOIInfo(uiMapID, poiID)
+            if info then
+                -- atlasName drives state on retail (leftIcon/rightIcon), textureIndex
+                -- on Era; capture both + the cap time left (minutes) per DBM-PvP.
+                local entry = {
+                    areaPoiID    = info.areaPoiID or poiID,
+                    name         = info.name,
+                    textureIndex = info.textureIndex,
+                    atlasName    = info.atlasName,
+                    timeLeft     = C_AreaPoiInfo.GetAreaPOITimeLeft and C_AreaPoiInfo.GetAreaPOITimeLeft(poiID) or nil,
+                }
+                -- State key = atlasName when present (retail), else textureIndex (Era).
+                local stateKey = entry.atlasName or entry.textureIndex
+                list[#list + 1] = entry
+                if lastPoi[entry.areaPoiID] ~= stateKey then
+                    changed[#changed + 1] = entry
+                    lastPoi[entry.areaPoiID] = stateKey
+                end
+            end
+        end
+        if not poiBaselined then
+            poiBaselined = true
+            Analytics.Record("ab_poi", { uiMapID = uiMapID, baseline = true, pois = list })
+            for _, e in ipairs(list) do
+                Analytics.Emit(("poi base %s=%s"):format(tostring(e.name), tostring(e.textureIndex or e.atlasName)))
+            end
+        elseif #changed > 0 then
+            Analytics.Record("ab_poi", { uiMapID = uiMapID, changed = changed })
+            for _, e in ipairs(changed) do
+                Analytics.Emit(("poi %s=%s"):format(tostring(e.name), tostring(e.textureIndex or e.atlasName)))
+            end
+        end
+    end
+
     local function OnEvent(_, event)
         if event == "UPDATE_BATTLEFIELD_SCORE" then
             if not (GetNumBattlefieldScores and GetNumBattlefieldScores() >= 1) then return end
@@ -560,6 +641,8 @@ do
             CaptureRoster()
         elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
             CleuEvent()
+        elseif event == "AREA_POIS_UPDATED" then
+            CapturePOIs()
         end
     end
 
@@ -568,8 +651,18 @@ do
     function Recorder.Start()
         if active then return end
         active = true
+        -- Dev default: auto-arm the recorder on every BG entry so a capture
+        -- session never needs `/bganalytics on` first. Player-facing default is
+        -- still off (Analytics scaffold) — strip this auto-arm at release, the
+        -- same way the forced scriptErrors CVar gets stripped.
+        Analytics.SetEnabled(true)
+        -- ...and live-export to the chat log so data reaches the dev tool with no
+        -- /reload (dev default — strip at release alongside the auto-arm).
+        Analytics.SetLiveExport(true)
         scoreboardCaptured = false
+        poiBaselined = false
         wipe(threat)
+        wipe(lastPoi)
 
         -- Fresh log per match: clear on a genuine new BG entry, but NOT on a
         -- /reload while still in the same match (that would wipe the captures we
@@ -592,17 +685,29 @@ do
         end
         frame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
         frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+        frame:RegisterEvent("AREA_POIS_UPDATED")
         CaptureZone(false)
         C_Timer.After(3, function() if active then CaptureZone(true) end end)
-        -- Periodically flush the CLEU aggregate so a /reload has it on hand
-        snapshotTicker = C_Timer.NewTicker(5, CaptureThreat)
-        -- Nudge a refresh if the flavor has the API; else the user opening the
-        -- scoreboard fires UPDATE_BATTLEFIELD_SCORE and we catch it then.
+        CapturePOIs() -- baseline now; AREA_POIS_UPDATED may have fired pre-arm
+        C_Timer.After(3, function() if active then CapturePOIs() end end)
+        -- Periodically flush the CLEU aggregate AND poll the scoreboard so the
+        -- roster/score streams fill without the user manually opening it: each
+        -- request fires UPDATE_BATTLEFIELD_SCORE, which we capture. Resolve the
+        -- request API once (global → C_PvP fallback; nil on some flavors → skip).
         local req = RequestBattlefieldScoreData or (C_PvP and C_PvP.RequestBattlefieldScoreData)
+        snapshotTicker = C_Timer.NewTicker(5, function()
+            CaptureThreat()
+            if req then req() end
+        end)
         if req then req() end
     end
 
     function Recorder.IsActive() return active == true end
+
+    -- Live CLEU aggregate (real damage/healing + heal counts per enemy), keyed by
+    -- name. Read-only view for the Intel overlay; scoreboard is 0 on Era so this
+    -- is the only real damage/healing source.
+    function Recorder.GetThreat() return threat end
 
     function Recorder.Stop()
         if not active then return end
@@ -610,9 +715,23 @@ do
         if frame then
             frame:UnregisterEvent("UPDATE_BATTLEFIELD_SCORE")
             frame:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+            frame:UnregisterEvent("AREA_POIS_UPDATED")
         end
         if snapshotTicker then snapshotTicker:Cancel(); snapshotTicker = nil end
         CaptureThreat() -- final snapshot before the marker drops
+
+        -- Live-export a compact end-of-match summary (chat log → no /reload needed
+        -- to see it): enemies tracked, top damage dealer, confirmed healers.
+        if Analytics.IsLiveExport() then
+            local healers, tracked, topName, topDmg = {}, 0, "?", 0
+            for _, e in pairs(threat) do
+                tracked = tracked + 1
+                if (e.heals or 0) > 0 then healers[#healers + 1] = e.name:match("^[^-]+") or e.name end
+                if (e.damage or 0) > topDmg then topDmg = e.damage; topName = e.name:match("^[^-]+") or e.name end
+            end
+            Analytics.Emit(("exit tracked=%d topdmg=%s(%d) healers=%s"):format(
+                tracked, topName, topDmg, #healers > 0 and table.concat(healers, ",") or "none"))
+        end
         -- Drop the match marker so re-entering the same BG counts as a new match
         if TitanBgGeneralSaved.Analytics then
             TitanBgGeneralSaved.Analytics.activeMatchMap = nil
@@ -642,6 +761,7 @@ do
         { key = "zone",  label = "ZONE",  tip = "Zone snapshot captured — instanceMapID + uiMapID logged for this match (VERIF-2)." },
         { key = "score", label = "SCORE", tip = "Scoreboard roster captured — full player list with classToken + faction. Open the scoreboard in-BG to populate (VERIF-3 / CMD-8)." },
         { key = "cleu",  label = "CLEU",  tip = "Combat-log threat captured — real damage/healing of nearby enemies; healers self-flag via heal events (CMD-8)." },
+        { key = "poi",   label = "POI",   tip = "AB node POIs captured — areaPoiID + textureIndex snapshots that decode base owner / assault state. AB only (VERIF-4)." },
     }
 
     -- Persisted under the already-registered TitanBgGeneralSaved table:
@@ -675,6 +795,7 @@ do
             zone  = has("zone"),
             score = has("scoreboard_roster") or has("scoreboard_shape"),
             cleu  = has("cleu_threat"),
+            poi   = has("ab_poi"),
         }
     end
 
@@ -695,10 +816,13 @@ do
 
     local function Build()
         local pad, btnW, btnH, gap = 12, 180, 24, 6
+        local cellW, ledSize, cellGap = 34, 14, 2
+        local rowW = #LED_DEFS * cellW + (#LED_DEFS - 1) * cellGap
+        local contentW = math.max(btnW, rowW) -- LED row can be wider than the buttons
         local headerH = 16 + 6 + 14 + 6 + 25 + 10  -- title + status + LED row + gaps
 
         frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        frame:SetSize(btnW + pad * 2, 100) -- height finalised after layout
+        frame:SetSize(contentW + pad * 2, 100) -- height finalised after layout
         frame:SetFrameStrata("FULLSCREEN_DIALOG") -- sit above trackers/other addons
         frame:SetToplevel(true)
         frame:SetMovable(true)
@@ -739,8 +863,7 @@ do
         statusFS:SetPoint("TOP", title, "BOTTOM", 0, -6)
 
         -- Live LED indicator row (glowing dot + tiny label), centered under status
-        local cellW, ledSize, cellGap = 34, 14, 2
-        local rowW = #LED_DEFS * cellW + (#LED_DEFS - 1) * cellGap
+        -- (cellW/ledSize/cellGap/rowW computed above to size the frame).
         local ledRow = CreateFrame("Frame", nil, frame)
         ledRow:SetSize(rowW, ledSize + 11)
         ledRow:SetPoint("TOP", statusFS, "BOTTOM", 0, -6)
@@ -832,6 +955,10 @@ end
 -- Recorder control surface (registered in CLAUDE.md globals): prints locally,
 -- never sends to chat. No arg = report; on/off toggles the gate; clear wipes;
 -- panel opens the dev button panel (VERIF-7).
+-- Forward declaration: the Live Intel overlay is defined later (it needs the
+-- stats/intel helpers), but this slash handler and the BG-entry hook reference it.
+local IntelPanel
+
 SLASH_TITANBGGENERALANALYTICS1 = "/bganalytics"
 SlashCmdList["TITANBGGENERALANALYTICS"] = function(msg)
     local arg = (msg or ""):lower():match("^%s*(%S*)")
@@ -846,6 +973,8 @@ SlashCmdList["TITANBGGENERALANALYTICS"] = function(msg)
         print("|cffeda55fBG General|r analytics log cleared")
     elseif arg == "panel" then
         DevPanel.Toggle()
+    elseif arg == "intel" then
+        if IntelPanel then IntelPanel.Toggle() end
     else
         Analytics.PrintReport()
     end
@@ -975,6 +1104,260 @@ local function BuildColGrid(parent, size, hGap, vGap, colDefs, rowActions)
     end
 end
 
+-- ******************************** Live BG stats (AB) *******************************
+-- Read-only live readouts for the main window footer. Sourced from confirmed APIs:
+-- node ownership via C_AreaPoiInfo (textureIndex decoded with DBM-PvP's Era table),
+-- resources via the classic AB score widgets (1893/1894), player counts from the
+-- scoreboard the recorder already polls. All locale-independent (no name matching).
+local ALLY_COLOR  = "|cff4d88ff" -- Alliance blue
+local HORDE_COLOR = "|cffff4d4d" -- Horde red
+local MUTE_COLOR  = "|cff808080"
+
+-- DBM-PvP PvPGeneral.lua icons table, Classic-Era AB nodes (Mine/Lumber/Blacksmith/
+-- Farm/Stables). 1=ally contested, 2=ally controlled, 3=horde contested, 4=horde
+-- controlled. Identify state by textureIndex — never the localized node name.
+local AB_NODE_STATE = {
+    [17] = 1, [18] = 2, [19] = 3, [20] = 4, -- Mine
+    [22] = 1, [23] = 2, [24] = 3, [25] = 4, -- Lumber Mill
+    [27] = 1, [28] = 2, [29] = 3, [30] = 4, -- Blacksmith
+    [32] = 1, [33] = 2, [34] = 3, [35] = 4, -- Farm
+    [37] = 1, [38] = 2, [39] = 3, [40] = 4, -- Stables
+}
+
+local function GetAbBaseCounts()
+    local out = { ally = 0, horde = 0, contested = 0, total = 0, ready = false }
+    if not (C_AreaPoiInfo and C_AreaPoiInfo.GetAreaPOIForMap and C_AreaPoiInfo.GetAreaPOIInfo) then return out end
+    local uiMapID = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+    if not uiMapID then return out end
+    local ids = C_AreaPoiInfo.GetAreaPOIForMap(uiMapID)
+    if not ids then return out end
+    for _, poiID in ipairs(ids) do
+        local info = C_AreaPoiInfo.GetAreaPOIInfo(uiMapID, poiID)
+        local st = info and AB_NODE_STATE[info.textureIndex]
+        if not st and info and info.atlasName then -- retail fallback
+            if info.atlasName:find("leftIcon") then st = 2
+            elseif info.atlasName:find("rightIcon") then st = 4 end
+        end
+        if st then
+            out.total = out.total + 1
+            if st == 2 then out.ally = out.ally + 1
+            elseif st == 4 then out.horde = out.horde + 1
+            else out.contested = out.contested + 1 end
+        end
+    end
+    out.ready = out.total > 0
+    return out
+end
+
+-- Classic AB resource totals from the icon-and-text score widgets (DBM-PvP: 1893
+-- Alliance, 1894 Horde; text is "current/max"). nil when the widgets are absent.
+local function GetAbResources()
+    local W = C_UIWidgetManager
+    if not (W and W.GetIconAndTextWidgetVisualizationInfo) then return nil end
+    local a = W.GetIconAndTextWidgetVisualizationInfo(1893)
+    local h = W.GetIconAndTextWidgetVisualizationInfo(1894)
+    if not (a and h and a.text and h.text) then return nil end
+    return tonumber(a.text:match("(%d+)")), tonumber(h.text:match("(%d+)"))
+end
+
+-- Alliance/Horde headcount from the scoreboard (faction is return #6: 0=Horde,
+-- 1=Alliance — numeric, locale-independent). The recorder already polls it.
+local function GetPlayerCounts()
+    local ally, horde = 0, 0
+    local n = GetNumBattlefieldScores and GetNumBattlefieldScores() or 0
+    if n > 0 and GetBattlefieldScore then
+        for i = 1, n do
+            local faction = select(6, GetBattlefieldScore(i))
+            if faction == 1 then ally = ally + 1
+            elseif faction == 0 then horde = horde + 1 end
+        end
+    end
+    return ally, horde
+end
+
+-- Era healing-capable classes (no spec detection on Era — class is the prior).
+-- A live heal event (CLEU) upgrades this to a confirmed healer.
+local HEALER_CAPABLE = { PRIEST = true, PALADIN = true, DRUID = true, SHAMAN = true }
+
+-- Ranked enemy intel for the live dev overlay. Merges the scoreboard (class,
+-- killing blows, deaths, faction — locale-independent positions) with the CLEU
+-- aggregate (real damage/healing + heal flag, the only damage source on Era).
+-- Danger order: confirmed healers first (CC priority), then real damage, then
+-- killing blows. Returns the enemy faction's players only.
+local function GetEnemyIntel()
+    local myFaction = (UnitFactionGroup("player") == "Horde") and 0 or 1
+    local threat = (Recorder.GetThreat and Recorder.GetThreat()) or {}
+    local n = GetNumBattlefieldScores and GetNumBattlefieldScores() or 0
+    local list = {}
+    if GetBattlefieldScore then
+        for i = 1, n do
+            -- 1 name, 2 KBs, 3 HKs, 4 deaths, 5 honor, 6 faction, ... 10 classToken
+            local name, kb, _, deaths, _, faction = GetBattlefieldScore(i)
+            local classToken = select(10, GetBattlefieldScore(i))
+            if name and faction and faction ~= myFaction then
+                local t = threat[name]
+                local confirmedHealer = t and t.heals and t.heals > 0
+                list[#list + 1] = {
+                    name        = name,
+                    classToken  = classToken,
+                    kb          = kb or 0,
+                    deaths      = deaths or 0,
+                    damage      = (t and t.damage) or 0,
+                    healing     = (t and t.healing) or 0,
+                    healer      = confirmedHealer or HEALER_CAPABLE[classToken] or false,
+                    confirmed   = confirmedHealer or false,
+                }
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.healer ~= b.healer then return a.healer end       -- healers to the top
+        if a.damage ~= b.damage then return a.damage > b.damage end
+        return a.kb > b.kb
+    end)
+    return list
+end
+
+-- ******************************** Live Intel overlay (dev) *******************************
+-- A large, movable dev overlay that follows the live battle in real time: base
+-- control, resources, headcount, and a danger-ranked enemy table (class-coloured,
+-- healers flagged). Deliberately a SEPARATE window so it can never break the
+-- player-facing main panel. Dev-only: auto-shown on BG entry, toggled with
+-- `/bganalytics intel`. Position + open state persist under TitanBgGeneralSaved.
+-- (IntelPanel is forward-declared above for the slash handler / BG-entry hook.)
+IntelPanel = {}
+do
+    local frame, summaryFS, headerFS
+    local rowFS = {}
+    local MAX_ROWS = 20
+    local LINE_H = 14
+
+    local function Store()
+        local s = TitanBgGeneralSaved.intelPanel
+        if type(s) ~= "table" then s = {}; TitanBgGeneralSaved.intelPanel = s end
+        return s
+    end
+
+    local function ClassColorCode(classToken)
+        local c = classToken and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classToken]
+        if c and c.colorStr then return "|c" .. c.colorStr end
+        if c then return ("|cff%02x%02x%02x"):format(c.r * 255, c.g * 255, c.b * 255) end
+        return "|cffffffff"
+    end
+
+    local function RoleTag(e)
+        if e.confirmed then return "|cff33ffffHEAL\226\156\147|r" end -- confirmed via CLEU heal
+        if e.healer    then return "|cff66cccchealer?|r" end           -- class prior only
+        return "|cffbbbbbbDPS|r"
+    end
+
+    local function Refresh()
+        if not frame or not frame:IsShown() then return end
+        if GetActiveBg() ~= "AB" then
+            summaryFS:SetText(MUTE_COLOR .. "Not in Arathi Basin — live intel is AB-focused for now.|r")
+            headerFS:SetText("")
+            for _, fs in ipairs(rowFS) do fs:SetText("") end
+            return
+        end
+        local b = GetAbBaseCounts()
+        local aRes, hRes = GetAbResources()
+        local aP, hP = GetPlayerCounts()
+        summaryFS:SetFormattedText(
+            "Bases %sA %d|r %sH %d|r%s    Resources %s%s|r/%s%s|r    Players %s%d|r/%s%d|r",
+            ALLY_COLOR, b.ally, HORDE_COLOR, b.horde,
+            b.contested > 0 and ("|cffffd100 ("..b.contested.." c)|r") or "",
+            ALLY_COLOR, aRes and tostring(aRes) or "?", HORDE_COLOR, hRes and tostring(hRes) or "?",
+            ALLY_COLOR, aP, HORDE_COLOR, hP)
+        headerFS:SetText("|cffeda55f#  Enemy                     Role     Dmg     KB   D|r")
+        local intel = GetEnemyIntel()
+        for i = 1, MAX_ROWS do
+            local e = intel[i]
+            if e then
+                local nm = e.name:match("^[^-]+") or e.name -- drop -Realm for width
+                rowFS[i]:SetFormattedText("%2d %s%-18s|r %s  %6d  %3d  %2d",
+                    i, ClassColorCode(e.classToken), nm:sub(1, 18), RoleTag(e), e.damage, e.kb, e.deaths)
+            else
+                rowFS[i]:SetText("")
+            end
+        end
+    end
+
+    local function Build()
+        local pad, width = 12, 380
+        frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        frame:SetSize(width, pad * 2 + 18 + 16 + 14 + MAX_ROWS * LINE_H)
+        frame:SetFrameStrata("FULLSCREEN_DIALOG")
+        frame:SetToplevel(true)
+        frame:SetMovable(true)
+        frame:EnableMouse(true)
+        frame:RegisterForDrag("LeftButton")
+        frame:SetScript("OnDragStart", frame.StartMoving)
+        frame:SetScript("OnDragStop", function(self)
+            self:StopMovingOrSizing()
+            local point, _, relativePoint, xOfs, yOfs = self:GetPoint()
+            local s = Store()
+            s.point, s.relativePoint, s.xOfs, s.yOfs = point, relativePoint, xOfs, yOfs
+        end)
+        frame:SetScript("OnShow", function() Store().shown = true end)
+        frame:SetScript("OnHide", function() Store().shown = false end)
+
+        local pos = Store()
+        if pos.point then
+            frame:ClearAllPoints()
+            frame:SetPoint(pos.point, UIParent, pos.relativePoint, pos.xOfs, pos.yOfs)
+        else
+            frame:SetPoint("LEFT", UIParent, "LEFT", 40, 0)
+        end
+        frame:SetBackdrop({
+            bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 4,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        frame:SetBackdropColor(0, 0, 0, 0.85)
+
+        local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", frame, "TOP", 0, -pad)
+        title:SetText("|cffeda55fBG General \226\128\148 Live Intel (dev)|r")
+
+        summaryFS = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        summaryFS:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, -pad - 20)
+        summaryFS:SetPoint("RIGHT", frame, "RIGHT", -pad, 0)
+        summaryFS:SetJustifyH("LEFT")
+
+        headerFS = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        headerFS:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, -pad - 38)
+        headerFS:SetJustifyH("LEFT")
+
+        for i = 1, MAX_ROWS do
+            local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            fs:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, -pad - 38 - 14 - (i - 1) * LINE_H)
+            fs:SetJustifyH("LEFT")
+            rowFS[i] = fs
+        end
+
+        frame:SetScript("OnUpdate", function(self, elapsed)
+            self._acc = (self._acc or 0) + elapsed
+            if self._acc >= 0.5 then self._acc = 0; Refresh() end
+        end)
+        Refresh()
+    end
+
+    function IntelPanel.Toggle()
+        if not frame then Build() return end
+        if frame:IsShown() then frame:Hide() else frame:Show(); Refresh() end
+    end
+
+    function IntelPanel.Show()
+        if not frame then Build() else frame:Show() end
+        Refresh()
+    end
+
+    function IntelPanel.RestoreIfOpen()
+        if Store().shown then IntelPanel.Show() end
+    end
+end
+
 -- ******************************** Show / Hide / Toggle BG General Screen *******************************
 local function HideBgGeneralScreen()
     if _G["BgGeneralWindow"] then
@@ -997,6 +1380,10 @@ local function ShowBgGeneralScreen()
     local titleGap    = 4
     local tabH        = 22
     local tabGap      = 4
+    local statsLineH  = 13
+    local statsGap    = 6
+    local statsLines  = 3
+    local statsH      = (statsLines + 1) * statsLineH -- +1 for the "draft" header
 
     local function gridWidth(nCols) return nCols * size + (nCols - 1) * hGap end
 
@@ -1005,7 +1392,7 @@ local function ShowBgGeneralScreen()
     local gridW   = gridWidth(maxCols)
     local gridH   = rows * size + (rows - 1) * vGap
     local totalW  = pad * 2 + gridW
-    local totalH  = pad * 2 + titleH + titleGap + tabH + tabGap + gridH
+    local totalH  = pad * 2 + titleH + titleGap + tabH + tabGap + gridH + statsGap + statsH
 
     local frame = CreateFrame("Frame", "BgGeneralWindow", UIParent, "BackdropTemplate")
     frame:SetSize(totalW, totalH)
@@ -1111,6 +1498,50 @@ local function ShowBgGeneralScreen()
         selectTab(bgContainers[activeBg])
     end
 
+    -- Live stats footer (AB): bases / resources / headcount, refreshed ~1s.
+    -- Anchored to the window bottom so it never disturbs the grid layout above.
+    -- Marked "draft" — UX review deliberately deferred (user call).
+    local statsHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    statsHeader:SetPoint("BOTTOM", frame, "BOTTOM", 0, pad + statsLines * statsLineH)
+    statsHeader:SetText(MUTE_COLOR .. "\226\128\148 live stats \194\183 draft \226\128\148|r")
+
+    local statLine = {}
+    for i = 1, statsLines do
+        local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("BOTTOM", frame, "BOTTOM", 0, pad + (statsLines - i) * statsLineH)
+        statLine[i] = fs
+    end
+
+    local function RefreshStats()
+        if GetActiveBg() ~= "AB" then
+            statLine[1]:SetText(MUTE_COLOR .. "Live stats — AB only|r")
+            statLine[2]:SetText(""); statLine[3]:SetText("")
+            return
+        end
+        local b = GetAbBaseCounts()
+        if b.ready then
+            statLine[1]:SetFormattedText("Bases  %sA %d|r  %sH %d|r%s",
+                ALLY_COLOR, b.ally, HORDE_COLOR, b.horde,
+                b.contested > 0 and ("  |cffffd100" .. b.contested .. " contested|r") or "")
+        else
+            statLine[1]:SetText(MUTE_COLOR .. "Bases  —|r")
+        end
+        local aRes, hRes = GetAbResources()
+        if aRes and hRes then
+            statLine[2]:SetFormattedText("Resources  %s%d|r / %s%d|r", ALLY_COLOR, aRes, HORDE_COLOR, hRes)
+        else
+            statLine[2]:SetText(MUTE_COLOR .. "Resources  —|r")
+        end
+        local aP, hP = GetPlayerCounts()
+        statLine[3]:SetFormattedText("Players  %s%d|r / %s%d|r", ALLY_COLOR, aP, HORDE_COLOR, hP)
+    end
+
+    frame:SetScript("OnUpdate", function(self, elapsed)
+        self._statAcc = (self._statAcc or 0) + elapsed
+        if self._statAcc >= 1 then self._statAcc = 0; RefreshStats() end
+    end)
+    RefreshStats()
+
     _G["BgGeneralWindow"] = frame
 end
 
@@ -1185,6 +1616,16 @@ autoOpenFrame:SetScript("OnEvent", function()
 
     -- Dev panel: reopen across /reload if it was left open (position restored in Build)
     DevPanel.RestoreIfOpen()
+
+    -- Live Intel overlay (dev): auto-show on BG entry so we can follow the battle
+    -- live; otherwise just restore it if it was left open across a /reload.
+    if IntelPanel then
+        if GetActiveBg() then
+            IntelPanel.Show()
+        else
+            IntelPanel.RestoreIfOpen()
+        end
+    end
 
     if not IsAutoOpenEnabled() then
         return
