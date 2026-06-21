@@ -815,7 +815,7 @@ local ShowBgGeneralScreen, HideBgGeneralScreen, ToggleBgGeneralScreen
 -- global. Native WoW look: DialogBox backdrop + UIPanelButtonTemplate buttons.
 local DevPanel = {}
 do
-    local frame, statusFS
+    local frame, statusFS, analyticsBtn
     local leds = {}  -- key -> { led, fs }
 
     local LED_ON  = "Interface\\COMMON\\Indicator-Green"
@@ -858,6 +858,9 @@ do
     local function Refresh()
         if not frame then return end
         statusFS:SetText(("Entries: %d"):format(TotalEntries())) -- recorder state now shown by the REC LED
+        if analyticsBtn then
+            analyticsBtn:SetText(Analytics.IsEnabled() and "REC: ON" or "REC: OFF")
+        end
         local st = LedState()
         for _, def in ipairs(LED_DEFS) do
             local p = leds[def.key]
@@ -921,12 +924,13 @@ do
         y = y - (ledSize + 11) - 6
 
         -- Button row (compact, horizontal so the merged window stays short).
+        -- The recorder toggle ("rec") shows live ON/OFF state, set in Refresh.
         local btns = {
-            { "Analytics", function() Analytics.SetEnabled(not Analytics.IsEnabled()); Refresh() end },
-            { "Clear",     function() Analytics.Clear(); Recorder.ClearThreat() end },
-            { "Report",    function() Analytics.PrintReport() end },
-            { "Reload",    function() ReloadUI() end },
-            { "Close",     function() HideBgGeneralScreen() end },
+            { key = "rec",    onClick = function() Analytics.SetEnabled(not Analytics.IsEnabled()); Refresh() end },
+            { key = "Clear",  onClick = function() Analytics.Clear(); Recorder.ClearThreat() end },
+            { key = "Report", onClick = function() Analytics.PrintReport() end },
+            { key = "Reload", onClick = function() ReloadUI() end },
+            { key = "Close",  onClick = function() HideBgGeneralScreen() end },
         }
         local bgap, bh = 4, 22
         local bw = math.floor((width - pad * 2 - (#btns - 1) * bgap) / #btns)
@@ -934,8 +938,12 @@ do
             local btn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
             btn:SetSize(bw, bh)
             btn:SetPoint("TOPLEFT", host, "TOPLEFT", pad + (i - 1) * (bw + bgap), y)
-            btn:SetText(b[1])
-            btn:SetScript("OnClick", b[2])
+            btn:SetScript("OnClick", b.onClick)
+            if b.key == "rec" then
+                analyticsBtn = btn -- text set live in Refresh ("REC: ON"/"REC: OFF")
+            else
+                btn:SetText(b.key)
+            end
         end
         y = y - bh
 
@@ -1357,6 +1365,7 @@ do
     -- True columns: one FontString per cell, fixed width + justify, so the table
     -- aligns regardless of the proportional game font (space-padding can't).
     local COLS = {
+        { key = "mark", w = 20,  just = "CENTER", head = "" },  -- row icons (skull, …)
         { key = "num",  w = 22,  just = "RIGHT", head = "#" },
         { key = "name", w = 132, just = "LEFT",  head = "Enemy" },
         { key = "role", w = 60,  just = "LEFT",  head = "Role" },
@@ -1407,15 +1416,19 @@ do
     end
     local function NumCell(n) return (n and n > 0) and ShortNum(n) or "|cff555555-|r" end
 
-    -- Big skull (raid target 8) for the deadliest enemy — embedded inline in the
-    -- name cell so it sits right beside the name.
-    local SKULL = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:20:20:0:0|t "
+    -- Marker column (leftmost): row icons. Skull = the deadliest enemy today;
+    -- more markers (FC, target, assist…) slot in here later, keeping names aligned.
+    local SKULL = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:13:13:0:0|t"
+    local function MarkText(e)
+        if e.deadliest then return SKULL end
+        return ""
+    end
 
     local function CellText(e, key, i)
+        if key == "mark" then return MarkText(e) end
         if key == "num"  then return tostring(i) end
         if key == "name" then
-            return (e.deadliest and SKULL or "")
-                .. ClassColorCode(e.classToken) .. (e.name:match("^[^-]+") or e.name) .. "|r"
+            return ClassColorCode(e.classToken) .. (e.name:match("^[^-]+") or e.name) .. "|r"
         end
         if key == "role" then return RoleText(e) end
         if key == "vs"   then return AdviceText(e) end
