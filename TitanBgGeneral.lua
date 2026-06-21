@@ -859,7 +859,7 @@ do
         if not frame then return end
         statusFS:SetText(("Entries: %d"):format(TotalEntries())) -- recorder state now shown by the REC LED
         if analyticsBtn then
-            analyticsBtn:SetText(Analytics.IsEnabled() and "REC: ON" or "REC: OFF")
+            analyticsBtn:SetText(Analytics.IsEnabled() and "Record: ON" or "Record: OFF")
         end
         local st = LedState()
         for _, def in ipairs(LED_DEFS) do
@@ -940,7 +940,7 @@ do
             btn:SetPoint("TOPLEFT", host, "TOPLEFT", pad + (i - 1) * (bw + bgap), y)
             btn:SetScript("OnClick", b.onClick)
             if b.key == "rec" then
-                analyticsBtn = btn -- text set live in Refresh ("REC: ON"/"REC: OFF")
+                analyticsBtn = btn -- text set live in Refresh ("Record: ON"/"Record: OFF")
             else
                 btn:SetText(b.key)
             end
