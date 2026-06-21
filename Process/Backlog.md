@@ -13,6 +13,7 @@ Basin**: fast callouts today, situational awareness and smart direction next.
 
 ## Bugs
 
+- [x] **[BUG] Announce Threats — "Invalid escape code in chat message"** (2026-06-20) — `AnnounceThreats` joined its KILL/CC groups with `" | "`; a bare `|` in a `SendChatMessage` string is parsed as a chat escape code (`| ` is invalid) and the client rejects the whole message. Fixed: separate groups with `" // "` instead. Any future enemy-facing chat must avoid raw `|` (use `||` only if a literal pipe is truly needed).
 - [x] **[BUG] Lua error on BG entry — `NewTicker` nil callback** (2026-06-14) — `ThreatProvider.Start` passed the global `RequestBattlefieldScoreData` straight to `C_Timer.NewTicker`; it was nil on the live Classic Era client → "bad argument #2 to '?'". First fired on the first live BG (WSG) since the threat skeleton landed. Fixed: resolve the request API at call time (global → `C_PvP` fallback), bail cleanly if absent, and wrap the ticker callback. Whether Era actually exposes the request API is a VERIF-3 question. (deployed 2026-06-14; confirm GREEN in WSG)
 
 ## Epic 0 — Process Bootstrap (2026-06-09)

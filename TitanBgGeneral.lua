@@ -1478,7 +1478,9 @@ do
             print("|cffeda55fBG General|r No enemy threat data yet — fight near them and it builds.")
             return
         end
-        SendChatMessage("Enemy threats >> " .. table.concat(parts, " | "), GetChatType())
+        -- Separate groups with " // ", NOT " | " — a bare "|" is read as a chat
+        -- escape code and SendChatMessage rejects it ("Invalid escape code").
+        SendChatMessage("Enemy threats >> " .. table.concat(parts, " // "), GetChatType())
     end
 
     local function Build()
