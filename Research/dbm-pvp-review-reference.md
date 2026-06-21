@@ -32,15 +32,24 @@ No `GetBestMapForUnit` needed — but it remains a sane fallback.
 On classic flavors `textureIndex` encodes **both the node and its state** —
 fully locale-independent identity, better than the `areaPoiID` plan:
 
-| Node | A-contested | A-controlled | H-contested | H-controlled |
-|---|---|---|---|---|
-| Gold Mine | 17 | 18 | 19 | 20 |
-| Lumber Mill | 22 | 23 | 24 | 25 |
-| Blacksmith | 27 | 28 | 29 | 30 |
-| Farm | 32 | 33 | 34 | 35 |
-| Stables | 37 | 38 | 39 | 40 |
-| (AV Graveyard) | 3 | 14 | 13 | 12 |
-| (AV Tower) | 8 | 10 | 11 | 9 |
+| Node | neutral | A-contested | A-controlled | H-contested | H-controlled |
+|---|---|---|---|---|---|
+| Gold Mine | 16 | 17 | 18 | 19 | 20 |
+| Lumber Mill | 21 | 22 | 23 | 24 | 25 |
+| Blacksmith | 26 | 27 | 28 | 29 | 30 |
+| Farm | 31 | 32 | 33 | 34 | 35 |
+| Stables | 36 | 37 | 38 | 39 | 40 |
+| (AV Graveyard) | — | 3 | 14 | 13 | 12 |
+| (AV Tower) | — | 8 | 10 | 11 | 9 |
+
+> **In-game confirmed (Era 1.15.x, 2026-06-20, VERIF-4 capture):** a full AB
+> match's `AREA_POIS_UPDATED` log (uiMapID 1461) matched this table exactly and
+> filled in the **neutral** column above (the match-start value per node = the
+> node's base index; contested/controlled are base+1..+4 → A-contested,
+> A-controlled, H-contested, H-controlled). The 64s cap timer was visible too
+> (Lumber Mill assault→control ~64s apart). Decode by `textureIndex` alone:
+> `node = floor((ti-16)/5)` → {GM,LM,BS,Farm,Stables}; `state = (ti-16)%5` →
+> {neutral, A-contested, A-controlled, H-contested, H-controlled}.
 
 (The classic GY/Tower rows use the `isClassic or isBCC` values; retail offsets
 most ranges by +1 and DBM instead matches `atlasName:find("leftIcon")` =
@@ -115,9 +124,10 @@ flag-carrier *vulnerability* timers are `isRetail`-gated (`PvPGeneral.lua:367-37
 
 - [x] Update `ab-node-state-research.md` (uiMapID, decode table, 64s, widgets) — done with this review
 - [x] Update `wsg-flag-state-research.md` (patterns available; Era-verify caveat) — done with this review
-- [ ] Friday is now **verification, not discovery**: confirm one AB node flip
-      matches the decode table, and confirm the WSG pickup/drop/return strings
-      fire as written (the "Unused"-pattern caveat)
+- [x] **AB decode confirmed in-game** (2026-06-20, VERIF-4): a full AB match's POI
+      log matched the decode table and added the neutral column (see note above).
+- [ ] Still to verify in-game: the WSG pickup/drop/return strings fire as written
+      (the "Unused"-pattern caveat) — VERIF-5.
 
 ## Sources
 
