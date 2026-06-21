@@ -1391,8 +1391,8 @@ do
 
     -- Role label + colour, driven by ResolveRole's classification.
     local ROLE_DISPLAY = {
-        HEAL     = "|cff33ffffHEAL\226\156\147|r", -- confirmed healer (cyan, ✓)
-        ["heal?"] = "|cff66ccccheal?|r",            -- class-prior guess
+        HEAL     = "|cff33ffffHEAL|r",              -- confirmed healer (cyan caps)
+        ["heal?"] = "|cff66ccccheal?|r",            -- class-prior guess (lowercase + ?)
         CASTER   = "|cffcc99ffCASTER|r",            -- magic-school DPS (arcane purple)
         MELEE    = "|cffff9933MELEE|r",             -- physical DPS (orange)
         DPS      = "|cffbbbbbbDPS|r",               -- unknown, no evidence yet
