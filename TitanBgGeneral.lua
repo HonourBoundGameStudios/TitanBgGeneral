@@ -1334,6 +1334,13 @@ local function GetEnemyIntel()
         if a.damage ~= b.damage then return a.damage > b.damage end
         return a.kb > b.kb
     end)
+    -- Flag the single deadliest (most damage dealt) so the panel can mark it with
+    -- a skull — the "this one kicked our ass" enemy.
+    local top, topDmg = nil, 0
+    for _, e in ipairs(list) do
+        if (e.damage or 0) > topDmg then topDmg = e.damage; top = e end
+    end
+    if top and topDmg > 0 then top.deadliest = true end
     return list
 end
 
@@ -1401,9 +1408,16 @@ do
     end
     local function NumCell(n) return (n and n > 0) and ShortNum(n) or "|cff555555-|r" end
 
+    -- Big skull (raid target 8) for the deadliest enemy — embedded inline in the
+    -- name cell so it sits right beside the name.
+    local SKULL = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:20:20:0:0|t "
+
     local function CellText(e, key, i)
         if key == "num"  then return tostring(i) end
-        if key == "name" then return ClassColorCode(e.classToken) .. (e.name:match("^[^-]+") or e.name) .. "|r" end
+        if key == "name" then
+            return (e.deadliest and SKULL or "")
+                .. ClassColorCode(e.classToken) .. (e.name:match("^[^-]+") or e.name) .. "|r"
+        end
         if key == "role" then return RoleText(e) end
         if key == "dmg"  then return NumCell(e.damage) end
         if key == "heal" then return NumCell(e.healing) end
@@ -1468,7 +1482,10 @@ do
         local kill = {}
         for i = 1, math.min(3, #dps) do
             local e = dps[i]
-            kill[i] = (e.name:match("^[^-]+") or e.name)
+            -- {skull} is a chat raid-target token (renders as the icon, chat-safe);
+            -- crown the #1 damage dealer with it.
+            kill[i] = (i == 1 and "{skull}" or "")
+                .. (e.name:match("^[^-]+") or e.name)
                 .. " (" .. ClassLabel(e.classToken) .. " " .. ShortNum(e.damage) .. ")"
         end
         local parts = {}
