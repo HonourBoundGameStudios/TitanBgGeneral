@@ -1173,6 +1173,38 @@ end
 -- A live heal event (CLEU) upgrades this to a confirmed healer.
 local HEALER_CAPABLE = { PRIEST = true, PALADIN = true, DRUID = true, SHAMAN = true }
 
+-- CMD-7: Classic Era (1.12 balance) class-vs-class advice, keyed by classToken.
+-- Ported from Research/classic-class-matchup-reference.md. favored = you're
+-- favoured (ENGAGE); avoid = you're countered (AVOID); anything absent =
+-- Neutral/contested → no call (false precision is worse than silence). Soft duel
+-- logic — a live healer flag overrides it ("CC, don't chase"); see the reference
+-- for BG modifiers (pocket healers, WOTF, consumables).
+local MATCHUP = {
+    WARRIOR = { favored = { "PRIEST", "SHAMAN", "DRUID" },            avoid = { "MAGE", "WARLOCK", "ROGUE" } },
+    PALADIN = { favored = { "ROGUE", "WARLOCK" },                     avoid = { "MAGE", "HUNTER" } },
+    HUNTER  = { favored = { "PALADIN", "PRIEST" },                    avoid = { "WARLOCK" } },
+    ROGUE   = { favored = { "PRIEST", "WARRIOR", "SHAMAN" },          avoid = { "PALADIN" } },
+    PRIEST  = { favored = { "MAGE", "DRUID" },                        avoid = { "WARRIOR", "ROGUE", "HUNTER" } },
+    SHAMAN  = { favored = { "MAGE" },                                 avoid = { "WARRIOR", "WARLOCK", "ROGUE" } },
+    MAGE    = { favored = { "WARRIOR", "PALADIN" },                   avoid = { "WARLOCK", "PRIEST", "SHAMAN", "DRUID" } },
+    WARLOCK = { favored = { "WARRIOR", "MAGE", "SHAMAN", "DRUID", "HUNTER" }, avoid = { "PALADIN" } },
+    DRUID   = { favored = { "MAGE" },                                 avoid = { "WARRIOR", "PRIEST", "WARLOCK" } },
+}
+
+-- Engage/Avoid call on one enemy for the player's class. A confirmed healer
+-- overrides the matrix (CC them, don't duel). Returns "ENGAGE"/"AVOID"/"CC" or
+-- nil (Neutral — render as nothing). myClass is resolved lazily + cached.
+local _playerClass
+local function EngageAdvice(enemyClassToken, isHealerConfirmed)
+    if isHealerConfirmed then return "CC" end
+    if not _playerClass then _, _playerClass = UnitClass("player") end
+    local m = _playerClass and MATCHUP[_playerClass]
+    if not (m and enemyClassToken) then return nil end
+    for _, c in ipairs(m.favored) do if c == enemyClassToken then return "ENGAGE" end end
+    for _, c in ipairs(m.avoid)   do if c == enemyClassToken then return "AVOID"  end end
+    return nil
+end
+
 -- Behaviour-first role inference (Research/spec-detection-research.md): exact spec
 -- is unobtainable for BG enemies on Era, so we classify ROLE from what the CLEU
 -- aggregate has actually seen. Returns role, healerFlag (CC priority + sort),
@@ -1235,6 +1267,7 @@ local function GetEnemyIntel()
                     role        = role,
                     healer      = healer,
                     confirmed   = confirmed,
+                    advice      = EngageAdvice(classToken, confirmed),
                 }
             end
         end
@@ -1256,6 +1289,7 @@ local function GetEnemyIntel()
                 role       = role,
                 healer     = healer,
                 confirmed  = confirmed,
+                advice     = EngageAdvice(t.classToken, confirmed),
             }
         end
     end
@@ -1294,6 +1328,7 @@ do
         { key = "num",  w = 22,  just = "RIGHT", head = "#" },
         { key = "name", w = 132, just = "LEFT",  head = "Enemy" },
         { key = "role", w = 60,  just = "LEFT",  head = "Role" },
+        { key = "vs",   w = 52,  just = "LEFT",  head = "You" },
         { key = "dmg",  w = 56,  just = "RIGHT", head = "Dmg" },
         { key = "heal", w = 56,  just = "RIGHT", head = "Heal" },
         { key = "kb",   w = 32,  just = "RIGHT", head = "KB" },
@@ -1323,6 +1358,14 @@ do
     }
     local function RoleText(e) return ROLE_DISPLAY[e.role] or ROLE_DISPLAY.DPS end
 
+    -- CMD-7 engage/avoid call (MATCHUP, healer-overridden). Neutral = nothing.
+    local ADVICE_DISPLAY = {
+        ENGAGE = "|cff33ff33Engage|r", -- you're favoured
+        AVOID  = "|cffff3333Avoid|r",  -- you're countered
+        CC     = "|cff33ffffCC|r",     -- healer — control, don't chase
+    }
+    local function AdviceText(e) return (e.advice and ADVICE_DISPLAY[e.advice]) or "|cff555555·|r" end
+
     -- Compact human number: 12345 -> 12.3k, keeps the column narrow at scale.
     local function ShortNum(n)
         n = n or 0
@@ -1343,6 +1386,7 @@ do
                 .. ClassColorCode(e.classToken) .. (e.name:match("^[^-]+") or e.name) .. "|r"
         end
         if key == "role" then return RoleText(e) end
+        if key == "vs"   then return AdviceText(e) end
         if key == "dmg"  then return NumCell(e.damage) end
         if key == "heal" then return NumCell(e.healing) end
         if key == "kb"   then return tostring(e.kb) end
