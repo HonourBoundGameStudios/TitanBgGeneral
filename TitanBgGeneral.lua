@@ -1143,6 +1143,38 @@ local function GetAbBaseCounts()
     return out
 end
 
+-- AB-2: per-node ownership for the node-state strip, keyed by grid abbreviation
+-- (ST/GM/BS/LM/FM). textureIndex decodes both node and state (VERIF-4 confirmed):
+-- node = floor((ti-16)/5), state = (ti-16)%5 → 0 neutral, 1 A-contested,
+-- 2 A-controlled, 3 H-contested, 4 H-controlled. owner = the controlling (or, when
+-- contested, the assaulting) faction; contested = an assault is in progress.
+local AB_NODE_BY_INDEX = { [0] = "GM", [1] = "LM", [2] = "BS", [3] = "FM", [4] = "ST" }
+local function GetAbNodeStates()
+    local states = {}
+    if not (C_AreaPoiInfo and C_AreaPoiInfo.GetAreaPOIForMap and C_AreaPoiInfo.GetAreaPOIInfo) then return states end
+    local uiMapID = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+    if not uiMapID then return states end
+    local ids = C_AreaPoiInfo.GetAreaPOIForMap(uiMapID)
+    if not ids then return states end
+    for _, poiID in ipairs(ids) do
+        local info = C_AreaPoiInfo.GetAreaPOIInfo(uiMapID, poiID)
+        local ti = info and info.textureIndex
+        if ti and ti >= 16 and ti <= 40 then
+            local abbr  = AB_NODE_BY_INDEX[math.floor((ti - 16) / 5)]
+            local state = (ti - 16) % 5
+            if abbr then
+                local owner, contested
+                if     state == 1 then owner, contested = "A", true
+                elseif state == 2 then owner = "A"
+                elseif state == 3 then owner, contested = "H", true
+                elseif state == 4 then owner = "H" end
+                states[abbr] = { owner = owner, contested = contested or false, state = state }
+            end
+        end
+    end
+    return states
+end
+
 -- Classic AB resource totals from the icon-and-text score widgets (DBM-PvP: 1893
 -- Alliance, 1894 Horde; text is "current/max"). nil when the widgets are absent.
 local function GetAbResources()
@@ -1620,9 +1652,39 @@ function ShowBgGeneralScreen()
     tabAV:SetPoint("TOPLEFT", frame, "TOPLEFT", gridLeft + 2 * (tabW + 4), tabOffsetY)
     tabAV:SetText("AV")
 
-    -- Grid containers (each sized to its own grid, centered in the window)
-    local gridOffsetY = tabOffsetY - tabH - tabGap
+    -- AB-2 node-state strip: one owner marker per AB column, in a band between the
+    -- tabs and the grid. Shown only on the AB tab; live-updated from the POI decode.
+    local stripH = 15
+    local stripY = tabOffsetY - tabH - 4
+    local gridOffsetY = stripY - stripH
 
+    local abAbbrOrder = { "ST", "GM", "BS", "LM", "FM" } -- matches the AB grid columns
+    local abStrip = CreateFrame("Frame", nil, frame)
+    abStrip:SetAllPoints(frame) -- holder so the cells show/hide as one with the AB tab
+    local abStripCells = {}
+    for c = 1, abCols do
+        local fs = abStrip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOPLEFT", frame, "TOPLEFT", gridLeft + (c - 1) * (size + hGap), stripY)
+        fs:SetWidth(size)
+        fs:SetJustifyH("CENTER")
+        abStripCells[c] = fs
+    end
+    local function RefreshAbStrip()
+        if not abStrip:IsShown() then return end
+        local states = GetAbNodeStates()
+        for c, abbr in ipairs(abAbbrOrder) do
+            local s = states[abbr]
+            local txt = MUTE_COLOR .. "\226\128\148|r" -- em dash = neutral / no data
+            if s and s.owner then
+                local col = s.contested and "|cffffd100" -- yellow while being assaulted
+                    or (s.owner == "A" and ALLY_COLOR or HORDE_COLOR)
+                txt = col .. s.owner .. (s.contested and "!" or "") .. "|r"
+            end
+            abStripCells[c]:SetText(txt)
+        end
+    end
+
+    -- Grid containers (each sized to its own grid, centered in the window)
     local abContainer = CreateFrame("Frame", nil, frame)
     abContainer:SetSize(gridWidth(abCols), gridH)
     abContainer:SetPoint("TOP", frame, "TOP", 0, gridOffsetY)
@@ -1645,6 +1707,7 @@ function ShowBgGeneralScreen()
         wsgContainer:Hide()
         avContainer:Hide()
         container:Show()
+        if container == abContainer then abStrip:Show(); RefreshAbStrip() else abStrip:Hide() end
     end
 
     tabAB:SetScript("OnClick", function() selectTab(abContainer) end)
@@ -1654,9 +1717,7 @@ function ShowBgGeneralScreen()
     -- Auto-select the tab for the battleground we're standing in
     local bgContainers = { AB = abContainer, WSG = wsgContainer, AV = avContainer }
     local activeBg = GetActiveBg()
-    if activeBg and bgContainers[activeBg] then
-        selectTab(bgContainers[activeBg])
-    end
+    selectTab((activeBg and bgContainers[activeBg]) or abContainer)
 
     -- Intel section (summary + enemy table + Announce) below the grid; its summary
     -- line already shows bases/resources/headcount, replacing the old stats footer.
@@ -1675,10 +1736,12 @@ function ShowBgGeneralScreen()
             self._acc = 0
             IntelPanel.Refresh()
             DevPanel.Refresh()
+            RefreshAbStrip()
         end
     end)
     IntelPanel.Refresh()
     DevPanel.Refresh()
+    RefreshAbStrip()
 
     TitanBgGeneralSaved.shown = true
     _G["BgGeneralWindow"] = frame

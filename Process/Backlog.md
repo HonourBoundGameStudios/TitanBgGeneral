@@ -82,7 +82,7 @@ healthTracker architecture).
 From "callout buttons" to "the addon tells you what to call".
 
 - [x] **[AB-1] Research: reading AB node ownership and capture state per flavor** — answered: `C_AreaPoiInfo` + `AREA_POIS_UPDATED` works on all flavors incl. Era (see `Research/ab-node-state-research.md`); decode tables need one in-game `/dump` session — action items in the doc
-- [ ] **[AB-2] Node state strip** — show each base's owner (Alliance/Horde/contested) above its grid column
+- [x] **[AB-2] Node state strip** (2026-06-20) — `GetAbNodeStates()` decodes per-node owner/contested from the POI `textureIndex` (VERIF-4 table); a strip in the band between the tabs and the AB grid shows one marker per column (ST/GM/BS/LM/FM): blue **A** / red **H** / yellow **A!**/**H!** while contested / grey — neutral. Shown only on the AB tab, live on the 0.5s ticker.
 - [ ] **[AB-3] Capture timers** — countdown until a contested base flips, surfaced on the strip
 - [ ] **[AB-4] Smart callout enrichment** — clicking a callout embeds live context ("INC ST — 4+, flips in 0:22")
 - [ ] **[AB-5] Advice engine v1** — rule-based suggestions ("you hold 2 bases and are behind — call attack on weakest enemy base")
