@@ -1672,6 +1672,8 @@ function ShowBgGeneralScreen()
     local gridOffsetY = stripY - stripH
 
     local abAbbrOrder = { "ST", "GM", "BS", "LM", "FM" } -- matches the AB grid columns
+    local AB_CAP_SECONDS = 64 -- Era capture time (VERIF-4 / DBM-PvP); contested → controlled
+    local abAssaultAt = {}    -- [abbr] = GetTime() when we first saw it contested
     local abStrip = CreateFrame("Frame", nil, frame)
     abStrip:SetAllPoints(frame) -- holder so the cells show/hide as one with the AB tab
     local abStripCells = {}
@@ -1680,18 +1682,30 @@ function ShowBgGeneralScreen()
         fs:SetPoint("TOPLEFT", frame, "TOPLEFT", gridLeft + (c - 1) * (size + hGap), stripY)
         fs:SetWidth(size)
         fs:SetJustifyH("CENTER")
+        fs:SetWordWrap(false)
         abStripCells[c] = fs
     end
+    -- AB-3: while a node is contested, show a ~64s capture countdown (faction-
+    -- coloured) in place of the owner letter — timed from when we first saw the
+    -- assault (Era has no real GetAreaPOITimeLeft, so it's derived, hence approx).
     local function RefreshAbStrip()
         if not abStrip:IsShown() then return end
         local states = GetAbNodeStates()
+        local now = GetTime()
         for c, abbr in ipairs(abAbbrOrder) do
             local s = states[abbr]
             local txt = MUTE_COLOR .. "\226\128\148|r" -- em dash = neutral / no data
-            if s and s.owner then
-                local col = s.contested and "|cffffd100" -- yellow while being assaulted
-                    or (s.owner == "A" and ALLY_COLOR or HORDE_COLOR)
-                txt = col .. s.owner .. (s.contested and "!" or "") .. "|r"
+            if s and s.contested then
+                local start = abAssaultAt[abbr]
+                if not start then start = now; abAssaultAt[abbr] = now end
+                local remain = math.max(0, math.ceil(AB_CAP_SECONDS - (now - start)))
+                local col = s.owner == "A" and ALLY_COLOR or HORDE_COLOR -- who's capturing
+                txt = col .. remain .. "|r"
+            elseif s and s.owner then
+                abAssaultAt[abbr] = nil -- settled → clear any running timer
+                txt = (s.owner == "A" and ALLY_COLOR or HORDE_COLOR) .. s.owner .. "|r"
+            else
+                abAssaultAt[abbr] = nil -- neutral
             end
             abStripCells[c]:SetText(txt)
         end
