@@ -554,11 +554,16 @@ do
     -- combat log (the Era scoreboard reports 0). Aggregates per hostile player;
     -- heal events also flag healers, which the scoreboard can't on Era.
     local HOSTILE = COMBATLOG_OBJECT_REACTION_HOSTILE
+    local SCHOOL_PHYSICAL = 1 -- SCHOOL_MASK_PHYSICAL; anything else is a magic school
     local function enemyRec(name, guid)
         local e = threat[name]
         if not e then
             local _, classToken = GetPlayerInfoByGUID(guid)
-            e = { name = name, classToken = classToken, damage = 0, healing = 0, heals = 0 }
+            -- magic/phys split → caster vs melee; healOthers (heals on allies, not
+            -- self) → real healer, excluding potion/healthstone/Drain-Life noise.
+            -- See Research/spec-detection-research.md (behaviour-first role inference).
+            e = { name = name, classToken = classToken, damage = 0, healing = 0, heals = 0,
+                  healOthers = 0, magicDamage = 0, physDamage = 0 }
             threat[name] = e
         end
         return e
@@ -567,21 +572,32 @@ do
     local function CleuEvent()
         if not Analytics.IsEnabled() then return end
         local info = { CombatLogGetCurrentEventInfo() }
-        local sub, srcGUID, srcName, srcFlags = info[2], info[4], info[5], info[6]
+        local sub, srcGUID, srcName, srcFlags, destGUID = info[2], info[4], info[5], info[6], info[8]
         if not (srcGUID and srcName and srcFlags) then return end
         if bit.band(srcFlags, HOSTILE) ~= HOSTILE then return end
         if strsub(srcGUID, 1, 6) ~= "Player" then return end -- enemy players only
         if sub == "SWING_DAMAGE" then
             local amt = tonumber(info[12]) or 0
-            if amt > 0 then local e = enemyRec(srcName, srcGUID); e.damage = e.damage + amt end
+            if amt > 0 then local e = enemyRec(srcName, srcGUID); e.damage = e.damage + amt; e.physDamage = e.physDamage + amt end
         elseif sub == "SPELL_DAMAGE" or sub == "SPELL_PERIODIC_DAMAGE" or sub == "RANGE_DAMAGE" then
             local amt = tonumber(info[15]) or 0
-            if amt > 0 then local e = enemyRec(srcName, srcGUID); e.damage = e.damage + amt end
+            if amt > 0 then
+                local e = enemyRec(srcName, srcGUID)
+                e.damage = e.damage + amt
+                if (tonumber(info[14]) or 0) == SCHOOL_PHYSICAL then
+                    e.physDamage = e.physDamage + amt
+                else
+                    e.magicDamage = e.magicDamage + amt
+                end
+            end
         elseif sub == "SPELL_HEAL" or sub == "SPELL_PERIODIC_HEAL" then
             local e = enemyRec(srcName, srcGUID)
             e.heals = e.heals + 1
             local amt = (tonumber(info[15]) or 0) - (tonumber(info[16]) or 0) -- effective heal
-            if amt > 0 then e.healing = e.healing + amt end
+            if amt > 0 then
+                e.healing = e.healing + amt
+                if destGUID and destGUID ~= srcGUID then e.healOthers = e.healOthers + amt end
+            end
         end
     end
 
@@ -603,6 +619,8 @@ do
                 threat[e.name] = {
                     name = e.name, classToken = e.classToken,
                     damage = e.damage or 0, healing = e.healing or 0, heals = e.heals or 0,
+                    healOthers = e.healOthers or 0,
+                    magicDamage = e.magicDamage or 0, physDamage = e.physDamage or 0,
                 }
             end
         end
@@ -1225,11 +1243,45 @@ end
 -- A live heal event (CLEU) upgrades this to a confirmed healer.
 local HEALER_CAPABLE = { PRIEST = true, PALADIN = true, DRUID = true, SHAMAN = true }
 
+-- Behaviour-first role inference (Research/spec-detection-research.md): exact spec
+-- is unobtainable for BG enemies on Era, so we classify ROLE from what the CLEU
+-- aggregate has actually seen. Returns role, healerFlag (CC priority + sort),
+-- confirmed (saw it, not a guess).
+--   HEAL  — heals allies more than they damage  (kills the "any heal = healer" bug)
+--   CASTER/MELEE — by which damage school dominates, once they've dealt damage
+--   heal? — healer-capable class with no combat evidence yet (class prior)
+--   DPS   — non-healer class, no evidence yet
+local function ResolveRole(t, classToken)
+    local dmg = (t and t.damage) or 0
+    if t and (t.physDamage ~= nil or t.magicDamage ~= nil) then
+        -- New record: full behaviour data (ally-heal + magic/phys split).
+        if (t.healOthers or 0) > 0 and (t.healOthers or 0) >= dmg then
+            return "HEAL", true, true
+        end
+        if dmg > 0 then
+            if (t.magicDamage or 0) > (t.physDamage or 0) then return "CASTER", false, false end
+            return "MELEE", false, false
+        end
+    elseif t then
+        -- Legacy snapshot (pre-upgrade): only totals — use healing dominance,
+        -- class-guarded so a potion-popping warrior isn't called a healer. Can't
+        -- tell caster vs melee without the school split, so DPS.
+        if (t.healing or 0) > 0 and (t.healing or 0) >= dmg and HEALER_CAPABLE[classToken or ""] then
+            return "HEAL", true, true
+        end
+        if dmg > 0 then return "DPS", false, false end
+    end
+    if HEALER_CAPABLE[classToken or ""] then
+        return "heal?", true, false
+    end
+    return "DPS", false, false
+end
+
 -- Ranked enemy intel for the live dev overlay. Merges the scoreboard (class,
 -- killing blows, deaths, faction — locale-independent positions) with the CLEU
--- aggregate (real damage/healing + heal flag, the only damage source on Era).
--- Danger order: confirmed healers first (CC priority), then real damage, then
--- killing blows. Returns the enemy faction's players only.
+-- aggregate (real damage/healing + role, the only such source on Era). Danger
+-- order: healers first (CC priority), then real damage, then killing blows.
+-- Returns the enemy faction's players only.
 local function GetEnemyIntel()
     local myFaction = (UnitFactionGroup("player") == "Horde") and 0 or 1
     local threat = (Recorder.GetThreat and Recorder.GetThreat()) or {}
@@ -1242,7 +1294,7 @@ local function GetEnemyIntel()
             local classToken = select(10, GetBattlefieldScore(i))
             if name and faction and faction ~= myFaction then
                 local t = threat[name]
-                local confirmedHealer = t and t.heals and t.heals > 0
+                local role, healer, confirmed = ResolveRole(t, classToken)
                 list[#list + 1] = {
                     name        = name,
                     classToken  = classToken,
@@ -1250,8 +1302,9 @@ local function GetEnemyIntel()
                     deaths      = deaths or 0,
                     damage      = (t and t.damage) or 0,
                     healing     = (t and t.healing) or 0,
-                    healer      = confirmedHealer or HEALER_CAPABLE[classToken] or false,
-                    confirmed   = confirmedHealer or false,
+                    role        = role,
+                    healer      = healer,
+                    confirmed   = confirmed,
                 }
             end
         end
@@ -1259,10 +1312,10 @@ local function GetEnemyIntel()
     -- Post-match / left the BG: the scoreboard empties, so fall back to the
     -- retained CLEU aggregate (enemies-only by construction) so the stats stay
     -- viewable after the match. KB/deaths come from the scoreboard, so they read
-    -- 0 here — damage/healing/heal flag are the meaningful post-match numbers.
+    -- 0 here — damage/healing/role are the meaningful post-match numbers.
     if #list == 0 then
         for _, t in pairs(threat) do
-            local confirmedHealer = (t.heals or 0) > 0
+            local role, healer, confirmed = ResolveRole(t, t.classToken)
             list[#list + 1] = {
                 name       = t.name,
                 classToken = t.classToken,
@@ -1270,8 +1323,9 @@ local function GetEnemyIntel()
                 deaths     = 0,
                 damage     = t.damage or 0,
                 healing    = t.healing or 0,
-                healer     = confirmedHealer or HEALER_CAPABLE[t.classToken] or false,
-                confirmed  = confirmedHealer or false,
+                role       = role,
+                healer     = healer,
+                confirmed  = confirmed,
             }
         end
     end
@@ -1328,11 +1382,15 @@ do
         return "|cffffffff"
     end
 
-    local function RoleText(e)
-        if e.confirmed then return "|cff33ffffHEAL\226\156\147|r" end -- confirmed via CLEU heal
-        if e.healer    then return "|cff66ccccheal?|r" end            -- class prior only
-        return "|cffbbbbbbDPS|r"
-    end
+    -- Role label + colour, driven by ResolveRole's classification.
+    local ROLE_DISPLAY = {
+        HEAL     = "|cff33ffffHEAL\226\156\147|r", -- confirmed healer (cyan, ✓)
+        ["heal?"] = "|cff66ccccheal?|r",            -- class-prior guess
+        CASTER   = "|cffcc99ffCASTER|r",            -- magic-school DPS (arcane purple)
+        MELEE    = "|cffff9933MELEE|r",             -- physical DPS (orange)
+        DPS      = "|cffbbbbbbDPS|r",               -- unknown, no evidence yet
+    }
+    local function RoleText(e) return ROLE_DISPLAY[e.role] or ROLE_DISPLAY.DPS end
 
     -- Compact human number: 12345 -> 12.3k, keeps the column narrow at scale.
     local function ShortNum(n)
