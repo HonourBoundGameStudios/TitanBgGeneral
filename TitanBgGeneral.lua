@@ -346,9 +346,14 @@ do
 end
 
 -- Debug surface for the verification session (registered in CLAUDE.md globals):
--- prints locally, never sends to chat.
+-- bare `/bgthreat` prints locally; `/bgthreat announce` calls the deadliest
+-- enemies to BG chat (same action as the Intel panel's Announce Threats button).
 SLASH_TITANBGGENERALTHREAT1 = "/bgthreat"
-SlashCmdList["TITANBGGENERALTHREAT"] = function()
+SlashCmdList["TITANBGGENERALTHREAT"] = function(msg)
+    if msg and msg:lower():match("announce") then
+        if IntelPanel and IntelPanel.AnnounceThreats then IntelPanel.AnnounceThreats() end
+        return
+    end
     print("|cffeda55fBG General|r " .. ThreatProvider.GetAdvisoryLine())
 end
 
@@ -405,6 +410,13 @@ do
 
     function Analytics.Clear()
         store().log = {}
+    end
+
+    -- Latest entry's data for a snapshot category (e.g. cleu_threat), or nil.
+    function Analytics.GetLatest(category)
+        local cat = store().log[category]
+        if cat and cat[#cat] then return cat[#cat].data end
+        return nil
     end
 
     -- Live disk export. WoW Lua is sandboxed (no io.*) and SavedVariables only
@@ -580,6 +592,22 @@ do
         if #list > 0 then Analytics.ReplaceLatest("cleu_threat", { players = list }) end
     end
 
+    -- Restore the live aggregate from the last snapshot — used on a /reload that
+    -- lands back in the SAME match, so the gathered stats survive (they only reset
+    -- on a genuinely new match or an explicit clear).
+    local function RestoreThreat()
+        local snap = Analytics.GetLatest and Analytics.GetLatest("cleu_threat")
+        if not (snap and snap.players) then return end
+        for _, e in ipairs(snap.players) do
+            if e.name then
+                threat[e.name] = {
+                    name = e.name, classToken = e.classToken,
+                    damage = e.damage or 0, healing = e.healing or 0, heals = e.heals or 0,
+                }
+            end
+        end
+    end
+
     -- VERIF-4: AB node-state decode capture. On AREA_POIS_UPDATED in AB, read the
     -- map's POI list via C_AreaPoiInfo and log areaPoiID + name + textureIndex.
     -- Nodes are identified by areaPoiID (never the localized name); textureIndex
@@ -664,19 +692,26 @@ do
         wipe(threat)
         wipe(lastPoi)
 
-        -- Fresh log per match: clear on a genuine new BG entry, but NOT on a
-        -- /reload while still in the same match (that would wipe the captures we
-        -- reload to read). Distinguish via a persisted match marker. The marker
-        -- is nilled in Stop on leaving, so the next entry (even same map) clears.
+        -- Fresh log per match, but stats survive a /reload within the same match.
+        -- Safety rule: only clear when we can POSITIVELY identify a different match
+        -- — i.e. instanceMapID is valid AND differs from the stored marker. If the
+        -- map ID is nil/stale (common for a beat after the post-reload loading
+        -- screen), we NEVER clear; we restore. Destroying data on an ambiguous
+        -- signal is the one outcome we must avoid. The marker is nilled in Stop on
+        -- leaving, so a genuine new match (even same map) still clears.
         local _, _, _, _, _, _, _, instanceMapID = GetInstanceInfo()
-        if Analytics.IsEnabled() then
-            local s = TitanBgGeneralSaved.Analytics
-            if not s or s.activeMatchMap ~= instanceMapID then
-                Analytics.Clear()
-            end
+        local s = TitanBgGeneralSaved.Analytics
+        local newMatch = instanceMapID and s and s.activeMatchMap ~= instanceMapID
+        if newMatch then
+            Analytics.Clear()
+        else
+            -- Same match (or unknown map): bring the gathered CLEU stats back into
+            -- the live table so they keep accumulating instead of starting at zero.
+            RestoreThreat()
         end
-        if TitanBgGeneralSaved.Analytics then
-            TitanBgGeneralSaved.Analytics.activeMatchMap = instanceMapID
+        -- Only advance the marker on a confirmed map; never overwrite it with nil.
+        if instanceMapID and s then
+            s.activeMatchMap = instanceMapID
         end
 
         if not frame then
@@ -706,8 +741,18 @@ do
 
     -- Live CLEU aggregate (real damage/healing + heal counts per enemy), keyed by
     -- name. Read-only view for the Intel overlay; scoreboard is 0 on Era so this
-    -- is the only real damage/healing source.
-    function Recorder.GetThreat() return threat end
+    -- is the only real damage/healing source. If the live table is empty (e.g.
+    -- after a /reload outside a BG), serve the last on-disk snapshot so post-match
+    -- stats stay viewable. A genuinely new match clears the snapshot in Start, so
+    -- this never resurrects a previous match's data.
+    function Recorder.GetThreat()
+        if next(threat) == nil then RestoreThreat() end
+        return threat
+    end
+
+    -- Explicit reset of the live aggregate (paired with Analytics.Clear so a
+    -- "clear" wipes both the snapshot and what the Intel panel shows right now).
+    function Recorder.ClearThreat() wipe(threat) end
 
     function Recorder.Stop()
         if not active then return end
@@ -915,7 +960,7 @@ do
             Analytics.SetEnabled(not Analytics.IsEnabled())
             Refresh()
         end)
-        AddButton("Clear Log",     function() Analytics.Clear(); Refresh() end)
+        AddButton("Clear Log",     function() Analytics.Clear(); Recorder.ClearThreat(); Refresh() end)
         AddButton("Print Report",  function() Analytics.PrintReport() end)
         AddButton("Reload UI",     function() ReloadUI() end)
         AddButton("Close",         function() frame:Hide() end)
@@ -970,6 +1015,7 @@ SlashCmdList["TITANBGGENERALANALYTICS"] = function(msg)
         print("|cffeda55fBG General|r analytics recorder |cffff0000disabled|r")
     elseif arg == "clear" then
         Analytics.Clear()
+        Recorder.ClearThreat()
         print("|cffeda55fBG General|r analytics log cleared")
     elseif arg == "panel" then
         DevPanel.Toggle()
@@ -1210,6 +1256,25 @@ local function GetEnemyIntel()
             end
         end
     end
+    -- Post-match / left the BG: the scoreboard empties, so fall back to the
+    -- retained CLEU aggregate (enemies-only by construction) so the stats stay
+    -- viewable after the match. KB/deaths come from the scoreboard, so they read
+    -- 0 here — damage/healing/heal flag are the meaningful post-match numbers.
+    if #list == 0 then
+        for _, t in pairs(threat) do
+            local confirmedHealer = (t.heals or 0) > 0
+            list[#list + 1] = {
+                name       = t.name,
+                classToken = t.classToken,
+                kb         = 0,
+                deaths     = 0,
+                damage     = t.damage or 0,
+                healing    = t.healing or 0,
+                healer     = confirmedHealer or HEALER_CAPABLE[t.classToken] or false,
+                confirmed  = confirmedHealer or false,
+            }
+        end
+    end
     table.sort(list, function(a, b)
         if a.healer ~= b.healer then return a.healer end       -- healers to the top
         if a.damage ~= b.damage then return a.damage > b.damage end
@@ -1227,10 +1292,28 @@ end
 -- (IntelPanel is forward-declared above for the slash handler / BG-entry hook.)
 IntelPanel = {}
 do
-    local frame, summaryFS, headerFS
-    local rowFS = {}
+    local frame, summaryFS
+    local headerCells, rowCells = {}, {}
     local MAX_ROWS = 20
     local LINE_H = 14
+
+    -- True columns: one FontString per cell, fixed width + justify, so the table
+    -- aligns regardless of the proportional game font (space-padding can't).
+    local COLS = {
+        { key = "num",  w = 22,  just = "RIGHT", head = "#" },
+        { key = "name", w = 132, just = "LEFT",  head = "Enemy" },
+        { key = "role", w = 60,  just = "LEFT",  head = "Role" },
+        { key = "dmg",  w = 56,  just = "RIGHT", head = "Dmg" },
+        { key = "heal", w = 56,  just = "RIGHT", head = "Heal" },
+        { key = "kb",   w = 32,  just = "RIGHT", head = "KB" },
+        { key = "d",    w = 26,  just = "RIGHT", head = "D" },
+    }
+    local COL_GAP = 4
+    local function ColX(c) -- left offset of column c (after the frame pad)
+        local x = 0
+        for j = 1, c - 1 do x = x + COLS[j].w + COL_GAP end
+        return x
+    end
 
     local function Store()
         local s = TitanBgGeneralSaved.intelPanel
@@ -1245,47 +1328,106 @@ do
         return "|cffffffff"
     end
 
-    local function RoleTag(e)
+    local function RoleText(e)
         if e.confirmed then return "|cff33ffffHEAL\226\156\147|r" end -- confirmed via CLEU heal
-        if e.healer    then return "|cff66cccchealer?|r" end           -- class prior only
+        if e.healer    then return "|cff66ccccheal?|r" end            -- class prior only
         return "|cffbbbbbbDPS|r"
+    end
+
+    -- Compact human number: 12345 -> 12.3k, keeps the column narrow at scale.
+    local function ShortNum(n)
+        n = n or 0
+        if n >= 10000 then return ("%.0fk"):format(n / 1000) end
+        if n >= 1000  then return ("%.1fk"):format(n / 1000) end
+        return tostring(n)
+    end
+    local function NumCell(n) return (n and n > 0) and ShortNum(n) or "|cff555555-|r" end
+
+    local function CellText(e, key, i)
+        if key == "num"  then return tostring(i) end
+        if key == "name" then return ClassColorCode(e.classToken) .. (e.name:match("^[^-]+") or e.name) .. "|r" end
+        if key == "role" then return RoleText(e) end
+        if key == "dmg"  then return NumCell(e.damage) end
+        if key == "heal" then return NumCell(e.healing) end
+        if key == "kb"   then return tostring(e.kb) end
+        if key == "d"    then return tostring(e.deaths) end
+        return ""
     end
 
     local function Refresh()
         if not frame or not frame:IsShown() then return end
-        if GetActiveBg() ~= "AB" then
-            summaryFS:SetText(MUTE_COLOR .. "Not in Arathi Basin — live intel is AB-focused for now.|r")
-            headerFS:SetText("")
-            for _, fs in ipairs(rowFS) do fs:SetText("") end
-            return
-        end
-        local b = GetAbBaseCounts()
-        local aRes, hRes = GetAbResources()
-        local aP, hP = GetPlayerCounts()
-        summaryFS:SetFormattedText(
-            "Bases %sA %d|r %sH %d|r%s    Resources %s%s|r/%s%s|r    Players %s%d|r/%s%d|r",
-            ALLY_COLOR, b.ally, HORDE_COLOR, b.horde,
-            b.contested > 0 and ("|cffffd100 ("..b.contested.." c)|r") or "",
-            ALLY_COLOR, aRes and tostring(aRes) or "?", HORDE_COLOR, hRes and tostring(hRes) or "?",
-            ALLY_COLOR, aP, HORDE_COLOR, hP)
-        headerFS:SetText("|cffeda55f#  Enemy                     Role     Dmg     KB   D|r")
         local intel = GetEnemyIntel()
+        local healerCount = 0
+        for _, e in ipairs(intel) do if e.healer then healerCount = healerCount + 1 end end
+        if GetActiveBg() == "AB" then
+            local b = GetAbBaseCounts()
+            local aRes, hRes = GetAbResources()
+            local aP, hP = GetPlayerCounts()
+            summaryFS:SetFormattedText(
+                "Bases %sA %d|r %sH %d|r%s   Res %s%s|r/%s%s|r   Players %s%d|r/%s%d|r   Enemies %d (|cff33ffff%d heal|r)",
+                ALLY_COLOR, b.ally, HORDE_COLOR, b.horde,
+                b.contested > 0 and ("|cffffd100 ("..b.contested.." c)|r") or "",
+                ALLY_COLOR, aRes and tostring(aRes) or "?", HORDE_COLOR, hRes and tostring(hRes) or "?",
+                ALLY_COLOR, aP, HORDE_COLOR, hP, #intel, healerCount)
+        elseif #intel > 0 then
+            -- Post-match (or left the BG): keep the last battle's stats on screen.
+            summaryFS:SetFormattedText(
+                "|cffffd100Post-match|r — last battle stats   Enemies %d (|cff33ffff%d heal|r)   (KB/D from scoreboard unavailable)",
+                #intel, healerCount)
+        else
+            summaryFS:SetText(MUTE_COLOR .. "No stored battle stats yet — enter a battleground.|r")
+        end
+        for c, col in ipairs(COLS) do headerCells[c]:SetText(#intel > 0 and ("|cffeda55f" .. col.head .. "|r") or "") end
         for i = 1, MAX_ROWS do
             local e = intel[i]
-            if e then
-                local nm = e.name:match("^[^-]+") or e.name -- drop -Realm for width
-                rowFS[i]:SetFormattedText("%2d %s%-18s|r %s  %6d  %3d  %2d",
-                    i, ClassColorCode(e.classToken), nm:sub(1, 18), RoleTag(e), e.damage, e.kb, e.deaths)
-            else
-                rowFS[i]:SetText("")
+            local cells = rowCells[i]
+            for c, col in ipairs(COLS) do
+                cells[c]:SetText(e and CellText(e, col.key, i) or "")
             end
         end
     end
 
+    local function ClassLabel(token)
+        if not token then return "?" end
+        return token:sub(1, 1) .. token:sub(2):lower()
+    end
+
+    -- CMD-6: call the deadliest enemies to chat. KILL = top CLEU damage dealers;
+    -- CC = healers (confirmed via heal events, or class-prior, marked "?"). Sent
+    -- on the right channel via GetChatType (INSTANCE_CHAT in a BG). Plain text —
+    -- colour codes don't render for other players.
+    function IntelPanel.AnnounceThreats()
+        local intel = GetEnemyIntel()
+        local dps, heals = {}, {}
+        for _, e in ipairs(intel) do
+            if e.healer and #heals < 3 then
+                heals[#heals + 1] = (e.name:match("^[^-]+") or e.name) .. (e.confirmed and "" or "?")
+            elseif (e.damage or 0) > 0 then
+                dps[#dps + 1] = e
+            end
+        end
+        table.sort(dps, function(a, b) return a.damage > b.damage end)
+        local kill = {}
+        for i = 1, math.min(3, #dps) do
+            local e = dps[i]
+            kill[i] = (e.name:match("^[^-]+") or e.name)
+                .. " (" .. ClassLabel(e.classToken) .. " " .. ShortNum(e.damage) .. ")"
+        end
+        local parts = {}
+        if #kill > 0  then parts[#parts + 1] = "KILL: " .. table.concat(kill, ", ") end
+        if #heals > 0 then parts[#parts + 1] = "CC heal: " .. table.concat(heals, ", ") end
+        if #parts == 0 then
+            print("|cffeda55fBG General|r No enemy threat data yet — fight near them and it builds.")
+            return
+        end
+        SendChatMessage("Enemy threats >> " .. table.concat(parts, " | "), GetChatType())
+    end
+
     local function Build()
-        local pad, width = 12, 380
+        local pad, width = 12, 440
+        local BTN_H = 22
         frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        frame:SetSize(width, pad * 2 + 18 + 16 + 14 + MAX_ROWS * LINE_H)
+        frame:SetSize(width, pad * 2 + 18 + 16 + 14 + MAX_ROWS * LINE_H + BTN_H + 4)
         frame:SetFrameStrata("FULLSCREEN_DIALOG")
         frame:SetToplevel(true)
         frame:SetMovable(true)
@@ -1325,16 +1467,31 @@ do
         summaryFS:SetPoint("RIGHT", frame, "RIGHT", -pad, 0)
         summaryFS:SetJustifyH("LEFT")
 
-        headerFS = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        headerFS:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, -pad - 38)
-        headerFS:SetJustifyH("LEFT")
+        local headerY = -pad - 38
+        for c, col in ipairs(COLS) do
+            local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            fs:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + ColX(c), headerY)
+            fs:SetWidth(col.w); fs:SetJustifyH(col.just); fs:SetWordWrap(false)
+            headerCells[c] = fs
+        end
 
         for i = 1, MAX_ROWS do
-            local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            fs:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, -pad - 38 - 14 - (i - 1) * LINE_H)
-            fs:SetJustifyH("LEFT")
-            rowFS[i] = fs
+            local rowY = headerY - 14 - (i - 1) * LINE_H
+            local cells = {}
+            for c, col in ipairs(COLS) do
+                local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                fs:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + ColX(c), rowY)
+                fs:SetWidth(col.w); fs:SetJustifyH(col.just); fs:SetWordWrap(false)
+                cells[c] = fs
+            end
+            rowCells[i] = cells
         end
+
+        local announce = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+        announce:SetSize(160, BTN_H)
+        announce:SetPoint("BOTTOM", frame, "BOTTOM", 0, pad - 4)
+        announce:SetText("Announce Threats")
+        announce:SetScript("OnClick", IntelPanel.AnnounceThreats)
 
         frame:SetScript("OnUpdate", function(self, elapsed)
             self._acc = (self._acc or 0) + elapsed
