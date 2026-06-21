@@ -982,6 +982,26 @@ SlashCmdList["TITANBGGENERALANALYTICS"] = function(msg)
     end
 end
 
+-- Forward-declared (defined with the live-stats block below) so the AB callout
+-- can enrich its message with the clicked node's live owner / capture state.
+local GetAbNodeStates
+
+-- AB-4: live node-state suffix appended to an AB callout. Plain ASCII (chat-safe,
+-- no "|"); shows the owner, or "<faction> capping M:SS" while contested.
+local function AbCalloutSuffix(abbr)
+    if GetActiveBg() ~= "AB" then return "" end
+    local s = GetAbNodeStates and GetAbNodeStates()[abbr]
+    if not s then return "" end
+    if s.contested then
+        local who = (s.owner == "A") and "Alliance" or "Horde"
+        local t = s.remain or 0
+        return (" - %s capping %d:%02d"):format(who, math.floor(t / 60), t % 60)
+    elseif s.owner then
+        return (s.owner == "A") and " - Alliance held" or " - Horde held"
+    end
+    return " - neutral"
+end
+
 -- ******************************** Build AB Grid *******************************
 local function BuildAbGrid(parent, size, hGap, vGap)
     local cols, rows = 5, 6
@@ -1043,7 +1063,7 @@ local function BuildAbGrid(parent, size, hGap, vGap)
                 else
                     action = cellActions[row][col].default
                 end
-                SendChatMessage(row .. " " .. action .. " " .. fullName, GetChatType())
+                SendChatMessage(row .. " " .. action .. " " .. fullName .. AbCalloutSuffix(abbr), GetChatType())
             end)
         end
     end
@@ -1157,7 +1177,10 @@ end
 -- 2 A-controlled, 3 H-contested, 4 H-controlled. owner = the controlling (or, when
 -- contested, the assaulting) faction; contested = an assault is in progress.
 local AB_NODE_BY_INDEX = { [0] = "GM", [1] = "LM", [2] = "BS", [3] = "FM", [4] = "ST" }
-local function GetAbNodeStates()
+local AB_CAP_SECONDS = 64       -- Era capture time (VERIF-4 / DBM-PvP): contested → controlled
+local abAssaultAt = {}          -- [abbr] = GetTime() first seen contested (Era has no real timeLeft)
+-- (forward-declared above BuildAbGrid so the AB callout can enrich with node state)
+function GetAbNodeStates()
     local states = {}
     if not (C_AreaPoiInfo and C_AreaPoiInfo.GetAreaPOIForMap and C_AreaPoiInfo.GetAreaPOIInfo) then return states end
     local uiMapID = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
@@ -1178,6 +1201,16 @@ local function GetAbNodeStates()
                 elseif state == 4 then owner = "H" end
                 states[abbr] = { owner = owner, contested = contested or false, state = state }
             end
+        end
+    end
+    -- Derive a capture countdown for contested nodes (timed from first sighting).
+    local now = GetTime()
+    for abbr, s in pairs(states) do
+        if s.contested then
+            if not abAssaultAt[abbr] then abAssaultAt[abbr] = now end
+            s.remain = math.max(0, math.ceil(AB_CAP_SECONDS - (now - abAssaultAt[abbr])))
+        else
+            abAssaultAt[abbr] = nil
         end
     end
     return states
@@ -1672,8 +1705,6 @@ function ShowBgGeneralScreen()
     local gridOffsetY = stripY - stripH
 
     local abAbbrOrder = { "ST", "GM", "BS", "LM", "FM" } -- matches the AB grid columns
-    local AB_CAP_SECONDS = 64 -- Era capture time (VERIF-4 / DBM-PvP); contested → controlled
-    local abAssaultAt = {}    -- [abbr] = GetTime() when we first saw it contested
     local abStrip = CreateFrame("Frame", nil, frame)
     abStrip:SetAllPoints(frame) -- holder so the cells show/hide as one with the AB tab
     local abStripCells = {}
@@ -1685,27 +1716,20 @@ function ShowBgGeneralScreen()
         fs:SetWordWrap(false)
         abStripCells[c] = fs
     end
-    -- AB-3: while a node is contested, show a ~64s capture countdown (faction-
-    -- coloured) in place of the owner letter — timed from when we first saw the
-    -- assault (Era has no real GetAreaPOITimeLeft, so it's derived, hence approx).
+    -- AB-3: while a node is contested, show its ~64s capture countdown (from
+    -- GetAbNodeStates' derived timer) in place of the owner letter, faction-
+    -- coloured by who's capturing.
     local function RefreshAbStrip()
         if not abStrip:IsShown() then return end
         local states = GetAbNodeStates()
-        local now = GetTime()
         for c, abbr in ipairs(abAbbrOrder) do
             local s = states[abbr]
             local txt = MUTE_COLOR .. "\226\128\148|r" -- em dash = neutral / no data
             if s and s.contested then
-                local start = abAssaultAt[abbr]
-                if not start then start = now; abAssaultAt[abbr] = now end
-                local remain = math.max(0, math.ceil(AB_CAP_SECONDS - (now - start)))
                 local col = s.owner == "A" and ALLY_COLOR or HORDE_COLOR -- who's capturing
-                txt = col .. remain .. "|r"
+                txt = col .. (s.remain or 0) .. "|r"
             elseif s and s.owner then
-                abAssaultAt[abbr] = nil -- settled → clear any running timer
                 txt = (s.owner == "A" and ALLY_COLOR or HORDE_COLOR) .. s.owner .. "|r"
-            else
-                abAssaultAt[abbr] = nil -- neutral
             end
             abStripCells[c]:SetText(txt)
         end
