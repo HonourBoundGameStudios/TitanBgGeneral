@@ -459,6 +459,68 @@ do
     end
 end
 
+-- ******************************** Nemesis DB (CMD-9) *******************************
+-- Permanent cross-match record of the deadliest opponents, under
+-- TitanBgGeneralSaved.nemeses (survives logout — distinct from the per-match
+-- cleu_threat snapshot). Fed at match end from the CLEU aggregate (peak damage/
+-- healing per name); read on BG entry to pre-mark known nemeses with the skull
+-- before this match's combat data builds.
+local Nemesis = {}
+do
+    local NEMESIS_DMG = 15000 -- peak damage in a match that earns a standing skull
+    local MAX_ENTRIES = 300   -- cap; prune least-recently-seen beyond this
+    local function store()
+        local s = TitanBgGeneralSaved.nemeses
+        if type(s) ~= "table" then s = {}; TitanBgGeneralSaved.nemeses = s end
+        return s
+    end
+
+    -- Merge a match's CLEU threat table (keyed by name) into the permanent DB.
+    function Nemesis.Record(threat)
+        if type(threat) ~= "table" then return end
+        local db, now = store(), time()
+        for name, e in pairs(threat) do
+            if name and ((e.damage or 0) > 0 or (e.healing or 0) > 0) then
+                local rec = db[name] or {}
+                rec.class = e.classToken or rec.class
+                rec.dmg   = math.max(rec.dmg or 0, e.damage or 0)
+                rec.heal  = math.max(rec.heal or 0, e.healing or 0)
+                rec.met   = (rec.met or 0) + 1
+                rec.last  = now
+                db[name]  = rec
+            end
+        end
+        -- Cap: drop the oldest-seen entries once over MAX_ENTRIES.
+        local n = 0; for _ in pairs(db) do n = n + 1 end
+        if n > MAX_ENTRIES then
+            local arr = {}
+            for k, v in pairs(db) do arr[#arr + 1] = { k = k, last = v.last or 0 } end
+            table.sort(arr, function(a, b) return a.last < b.last end)
+            for i = 1, n - MAX_ENTRIES do db[arr[i].k] = nil end
+        end
+    end
+
+    function Nemesis.IsNemesis(name)
+        local rec = name and store()[name]
+        return rec ~= nil and (rec.dmg or 0) >= NEMESIS_DMG
+    end
+
+    function Nemesis.Clear() TitanBgGeneralSaved.nemeses = {}; print("|cffeda55fBG General|r nemesis DB cleared") end
+
+    function Nemesis.Print()
+        local arr = {}
+        for k, v in pairs(store()) do arr[#arr + 1] = { name = k, v = v } end
+        table.sort(arr, function(a, b) return (a.v.dmg or 0) > (b.v.dmg or 0) end)
+        print(("|cffeda55fBG General|r nemeses: %d tracked (top by peak damage):"):format(#arr))
+        for i = 1, math.min(15, #arr) do
+            local r = arr[i]
+            print(("  %s  dmg %d  heal %d  met %d"):format(
+                r.name:match("^[^-]+") or r.name, r.v.dmg or 0, r.v.heal or 0, r.v.met or 0))
+        end
+        if #arr == 0 then print("  (none yet)") end
+    end
+end
+
 -- ******************************** Recorder capture hooks (VERIF-2/3) *******************************
 -- Feeds the Analytics log from live events while in a BG. Every capture routes
 -- through Analytics.Record (no-op when the recorder is off), so this is inert
@@ -782,6 +844,7 @@ do
         end
         if snapshotTicker then snapshotTicker:Cancel(); snapshotTicker = nil end
         CaptureThreat() -- final snapshot before the marker drops
+        Nemesis.Record(threat) -- CMD-9: bank this match's enemies into the permanent DB
 
         -- Live-export a compact end-of-match summary (chat log → no /reload needed
         -- to see it): enemies tracked, top damage dealer, confirmed healers.
@@ -977,6 +1040,8 @@ SlashCmdList["TITANBGGENERALANALYTICS"] = function(msg)
     elseif arg == "panel" or arg == "intel" then
         -- Both now open the single merged window (callouts + intel + dev).
         if ToggleBgGeneralScreen then ToggleBgGeneralScreen() end
+    elseif arg == "nemesis" then
+        if (msg or ""):lower():match("clear") then Nemesis.Clear() else Nemesis.Print() end
     else
         Analytics.PrintReport()
     end
@@ -1380,6 +1445,7 @@ local function GetEnemyIntel()
                     healer      = healer,
                     confirmed   = confirmed,
                     advice      = EngageAdvice(classToken, confirmed),
+                    nemesis     = Nemesis.IsNemesis(name), -- known heavy hitter → skull on sight
                 }
             end
         end
@@ -1402,6 +1468,7 @@ local function GetEnemyIntel()
                 healer     = healer,
                 confirmed  = confirmed,
                 advice     = EngageAdvice(t.classToken, confirmed),
+                nemesis    = Nemesis.IsNemesis(t.name),
             }
         end
     end
@@ -1492,7 +1559,8 @@ do
     -- more markers (FC, target, assist…) slot in here later, keeping names aligned.
     local SKULL = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:13:13:0:0|t"
     local function MarkText(e)
-        if e.deadliest then return SKULL end
+        -- skull for this match's deadliest OR a known nemesis (CMD-9, on sight)
+        if e.deadliest or e.nemesis then return SKULL end
         return ""
     end
 
