@@ -802,6 +802,10 @@ do
     end
 end
 
+-- Forward declarations for the single merged window — defined further down, but
+-- referenced earlier by the dev controls (Close) and the /bganalytics handler.
+local ShowBgGeneralScreen, HideBgGeneralScreen, ToggleBgGeneralScreen
+
 -- ******************************** Dev Panel (VERIF-7) *******************************
 -- One/two-press control surface for the verification recorder, so a session
 -- never needs typed slash commands mid-match. Opened with `/bganalytics panel`.
@@ -826,17 +830,6 @@ do
         { key = "cleu",  label = "CLEU",  tip = "Combat-log threat captured — real damage/healing of nearby enemies; healers self-flag via heal events (CMD-8)." },
         { key = "poi",   label = "POI",   tip = "AB node POIs captured — areaPoiID + textureIndex snapshots that decode base owner / assault state. AB only (VERIF-4)." },
     }
-
-    -- Persisted under the already-registered TitanBgGeneralSaved table:
-    -- { point, relativePoint, xOfs, yOfs, shown } — position + last open/close state.
-    local function PanelStore()
-        local s = TitanBgGeneralSaved.devPanel
-        if type(s) ~= "table" then
-            s = {}
-            TitanBgGeneralSaved.devPanel = s
-        end
-        return s
-    end
 
     local function TotalEntries()
         local s = TitanBgGeneralSaved.Analytics
@@ -877,59 +870,29 @@ do
         end
     end
 
-    local function Build()
-        local pad, btnW, btnH, gap = 12, 180, 24, 6
+    -- Render the dev controls (status + LED row + button row) INTO a host frame,
+    -- starting at host-relative y = topY. Returns the y below the section. The
+    -- merged window owns the frame/backdrop/drag/ticker; this only draws children.
+    function DevPanel.Populate(host, pad, topY)
+        frame = host
+        local width = host:GetWidth()
         local cellW, ledSize, cellGap = 34, 14, 2
         local rowW = #LED_DEFS * cellW + (#LED_DEFS - 1) * cellGap
-        local contentW = math.max(btnW, rowW) -- LED row can be wider than the buttons
-        local headerH = 16 + 6 + 14 + 6 + 25 + 10  -- title + status + LED row + gaps
+        local y = topY
 
-        frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        frame:SetSize(contentW + pad * 2, 100) -- height finalised after layout
-        frame:SetFrameStrata("FULLSCREEN_DIALOG") -- sit above trackers/other addons
-        frame:SetToplevel(true)
-        frame:SetMovable(true)
-        frame:EnableMouse(true)
-        frame:RegisterForDrag("LeftButton")
-        frame:SetScript("OnDragStart", frame.StartMoving)
-        frame:SetScript("OnDragStop", function(self)
-            self:StopMovingOrSizing()
-            local point, _, relativePoint, xOfs, yOfs = self:GetPoint()
-            local s = PanelStore()
-            s.point, s.relativePoint, s.xOfs, s.yOfs = point, relativePoint, xOfs, yOfs
-        end)
-        -- Persist open/close so a /reload restores the panel as the user left it
-        frame:SetScript("OnShow", function() PanelStore().shown = true end)
-        frame:SetScript("OnHide", function() PanelStore().shown = false end)
+        local divider = host:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        divider:SetPoint("TOP", host, "TOP", 0, y)
+        divider:SetText("|cff808080\226\128\148 dev \226\128\148|r")
+        y = y - 16
 
-        -- Restore saved position, else center
-        local pos = PanelStore()
-        if pos.point then
-            frame:ClearAllPoints()
-            frame:SetPoint(pos.point, UIParent, pos.relativePoint, pos.xOfs, pos.yOfs)
-        else
-            frame:SetPoint("CENTER")
-        end
-        frame:SetBackdrop({
-            bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
-            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-            tile = true, tileSize = 32, edgeSize = 4,
-            insets = { left = 4, right = 4, top = 4, bottom = 4 },
-        })
-        frame:SetBackdropColor(0, 0, 0, 1)
+        statusFS = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        statusFS:SetPoint("TOP", host, "TOP", 0, y)
+        y = y - 16
 
-        local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        title:SetPoint("TOP", frame, "TOP", 0, -pad)
-        title:SetText("|cffeda55fBG General — Dev|r")
-
-        statusFS = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        statusFS:SetPoint("TOP", title, "BOTTOM", 0, -6)
-
-        -- Live LED indicator row (glowing dot + tiny label), centered under status
-        -- (cellW/ledSize/cellGap/rowW computed above to size the frame).
-        local ledRow = CreateFrame("Frame", nil, frame)
+        -- Live LED indicator row (glowing dot + tiny label), centered.
+        local ledRow = CreateFrame("Frame", nil, host)
         ledRow:SetSize(rowW, ledSize + 11)
-        ledRow:SetPoint("TOP", statusFS, "BOTTOM", 0, -6)
+        ledRow:SetPoint("TOP", host, "TOP", 0, y)
         for i, def in ipairs(LED_DEFS) do
             local cell = CreateFrame("Frame", nil, ledRow)
             cell:SetSize(cellW, ledSize + 11)
@@ -955,64 +918,32 @@ do
             end)
             cell:SetScript("OnLeave", function() GameTooltip:Hide() end)
         end
+        y = y - (ledSize + 11) - 6
 
-        -- Refresh the status line + pills live (~1s) while the panel is shown
-        frame:SetScript("OnUpdate", function(self, elapsed)
-            self._acc = (self._acc or 0) + elapsed
-            if self._acc >= 1 then self._acc = 0; Refresh() end
-        end)
-
-        local y = -(pad + headerH)
-        local function AddButton(text, onClick)
-            local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-            b:SetSize(btnW, btnH)
-            b:SetPoint("TOP", frame, "TOP", 0, y)
-            b:SetText(text)
-            b:SetScript("OnClick", onClick)
-            y = y - (btnH + gap)
-            return b
+        -- Button row (compact, horizontal so the merged window stays short).
+        local btns = {
+            { "Analytics", function() Analytics.SetEnabled(not Analytics.IsEnabled()); Refresh() end },
+            { "Clear",     function() Analytics.Clear(); Recorder.ClearThreat() end },
+            { "Report",    function() Analytics.PrintReport() end },
+            { "Reload",    function() ReloadUI() end },
+            { "Close",     function() HideBgGeneralScreen() end },
+        }
+        local bgap, bh = 4, 22
+        local bw = math.floor((width - pad * 2 - (#btns - 1) * bgap) / #btns)
+        for i, b in ipairs(btns) do
+            local btn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
+            btn:SetSize(bw, bh)
+            btn:SetPoint("TOPLEFT", host, "TOPLEFT", pad + (i - 1) * (bw + bgap), y)
+            btn:SetText(b[1])
+            btn:SetScript("OnClick", b[2])
         end
+        y = y - bh
 
-        -- Toggles the recorder gate (same as /bganalytics on|off); state shown in the status line
-        AddButton("Toggle BG Analytics", function()
-            Analytics.SetEnabled(not Analytics.IsEnabled())
-            Refresh()
-        end)
-        AddButton("Clear Log",     function() Analytics.Clear(); Recorder.ClearThreat(); Refresh() end)
-        AddButton("Print Report",  function() Analytics.PrintReport() end)
-        AddButton("Reload UI",     function() ReloadUI() end)
-        AddButton("Close",         function() frame:Hide() end)
-
-        frame:SetHeight(-y + pad - gap)
-        -- Frame is created already shown, before OnShow was attached, so record it
-        PanelStore().shown = true
+        return y
     end
 
-    function DevPanel.Toggle()
-        if not frame then
-            Build()
-            Refresh()
-            return -- Build leaves the frame shown
-        end
-        if frame:IsShown() then
-            frame:Hide()
-        else
-            frame:Show()
-            Refresh()
-        end
-    end
-
-    -- Called on load/zone: reopen the panel only if it was open at last /reload
-    function DevPanel.RestoreIfOpen()
-        if not PanelStore().shown then return end
-        if not frame then
-            Build()
-            Refresh()
-        else
-            frame:Show()
-            Refresh()
-        end
-    end
+    -- Public refresh, called by the merged window's ticker.
+    DevPanel.Refresh = Refresh
 end
 
 -- Recorder control surface (registered in CLAUDE.md globals): prints locally,
@@ -1035,10 +966,9 @@ SlashCmdList["TITANBGGENERALANALYTICS"] = function(msg)
         Analytics.Clear()
         Recorder.ClearThreat()
         print("|cffeda55fBG General|r analytics log cleared")
-    elseif arg == "panel" then
-        DevPanel.Toggle()
-    elseif arg == "intel" then
-        if IntelPanel then IntelPanel.Toggle() end
+    elseif arg == "panel" or arg == "intel" then
+        -- Both now open the single merged window (callouts + intel + dev).
+        if ToggleBgGeneralScreen then ToggleBgGeneralScreen() end
     else
         Analytics.PrintReport()
     end
@@ -1355,7 +1285,7 @@ IntelPanel = {}
 do
     local frame, summaryFS
     local headerCells, rowCells = {}, {}
-    local MAX_ROWS = 20
+    local MAX_ROWS = 15 -- AB is 15v15; enough to list the whole enemy team
     local LINE_H = 14
 
     -- True columns: one FontString per cell, fixed width + justify, so the table
@@ -1374,12 +1304,6 @@ do
         local x = 0
         for j = 1, c - 1 do x = x + COLS[j].w + COL_GAP end
         return x
-    end
-
-    local function Store()
-        local s = TitanBgGeneralSaved.intelPanel
-        if type(s) ~= "table" then s = {}; TitanBgGeneralSaved.intelPanel = s end
-        return s
     end
 
     local function ClassColorCode(classToken)
@@ -1500,54 +1424,27 @@ do
         SendChatMessage("Enemy threats >> " .. table.concat(parts, " // "), GetChatType())
     end
 
-    local function Build()
-        local pad, width = 12, 440
-        local BTN_H = 22
-        frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        frame:SetSize(width, pad * 2 + 18 + 16 + 14 + MAX_ROWS * LINE_H + BTN_H + 4)
-        frame:SetFrameStrata("FULLSCREEN_DIALOG")
-        frame:SetToplevel(true)
-        frame:SetMovable(true)
-        frame:EnableMouse(true)
-        frame:RegisterForDrag("LeftButton")
-        frame:SetScript("OnDragStart", frame.StartMoving)
-        frame:SetScript("OnDragStop", function(self)
-            self:StopMovingOrSizing()
-            local point, _, relativePoint, xOfs, yOfs = self:GetPoint()
-            local s = Store()
-            s.point, s.relativePoint, s.xOfs, s.yOfs = point, relativePoint, xOfs, yOfs
-        end)
-        frame:SetScript("OnShow", function() Store().shown = true end)
-        frame:SetScript("OnHide", function() Store().shown = false end)
+    -- Width needed for the table = pad + last column's right edge + pad.
+    function IntelPanel.Width(pad)
+        return pad * 2 + ColX(#COLS) + COLS[#COLS].w
+    end
 
-        local pos = Store()
-        if pos.point then
-            frame:ClearAllPoints()
-            frame:SetPoint(pos.point, UIParent, pos.relativePoint, pos.xOfs, pos.yOfs)
-        else
-            frame:SetPoint("LEFT", UIParent, "LEFT", 40, 0)
-        end
-        frame:SetBackdrop({
-            bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
-            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-            tile = true, tileSize = 32, edgeSize = 4,
-            insets = { left = 4, right = 4, top = 4, bottom = 4 },
-        })
-        frame:SetBackdropColor(0, 0, 0, 0.85)
+    -- Render the intel section (summary + table + Announce) INTO a host frame,
+    -- starting at host-relative y = topY. Returns the y below the section so the
+    -- caller can stack the dev section under it. The merged window owns the frame,
+    -- backdrop, drag, position and the refresh ticker — this only draws children.
+    function IntelPanel.Populate(host, pad, topY)
+        frame = host
 
-        local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        title:SetPoint("TOP", frame, "TOP", 0, -pad)
-        title:SetText("|cffeda55fBG General \226\128\148 Live Intel (dev)|r")
-
-        summaryFS = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        summaryFS:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, -pad - 20)
-        summaryFS:SetPoint("RIGHT", frame, "RIGHT", -pad, 0)
+        summaryFS = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        summaryFS:SetPoint("TOPLEFT", host, "TOPLEFT", pad, topY)
+        summaryFS:SetPoint("RIGHT", host, "RIGHT", -pad, 0)
         summaryFS:SetJustifyH("LEFT")
 
-        local headerY = -pad - 38
+        local headerY = topY - 18
         for c, col in ipairs(COLS) do
-            local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            fs:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + ColX(c), headerY)
+            local fs = host:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            fs:SetPoint("TOPLEFT", host, "TOPLEFT", pad + ColX(c), headerY)
             fs:SetWidth(col.w); fs:SetJustifyH(col.just); fs:SetWordWrap(false)
             headerCells[c] = fs
         end
@@ -1556,90 +1453,77 @@ do
             local rowY = headerY - 14 - (i - 1) * LINE_H
             local cells = {}
             for c, col in ipairs(COLS) do
-                local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                fs:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + ColX(c), rowY)
+                local fs = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                fs:SetPoint("TOPLEFT", host, "TOPLEFT", pad + ColX(c), rowY)
                 fs:SetWidth(col.w); fs:SetJustifyH(col.just); fs:SetWordWrap(false)
                 cells[c] = fs
             end
             rowCells[i] = cells
         end
+        local rowsBottom = headerY - 14 - MAX_ROWS * LINE_H
 
-        local announce = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        announce:SetSize(160, BTN_H)
-        announce:SetPoint("BOTTOM", frame, "BOTTOM", 0, pad - 4)
+        local announce = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
+        announce:SetSize(160, 22)
+        announce:SetPoint("TOP", host, "TOP", 0, rowsBottom - 2)
         announce:SetText("Announce Threats")
         announce:SetScript("OnClick", IntelPanel.AnnounceThreats)
 
-        frame:SetScript("OnUpdate", function(self, elapsed)
-            self._acc = (self._acc or 0) + elapsed
-            if self._acc >= 0.5 then self._acc = 0; Refresh() end
-        end)
-        Refresh()
+        return rowsBottom - 2 - 22
     end
 
-    function IntelPanel.Toggle()
-        if not frame then Build() return end
-        if frame:IsShown() then frame:Hide() else frame:Show(); Refresh() end
-    end
-
-    function IntelPanel.Show()
-        if not frame then Build() else frame:Show() end
-        Refresh()
-    end
-
-    function IntelPanel.RestoreIfOpen()
-        if Store().shown then IntelPanel.Show() end
-    end
+    -- Public refresh, called by the merged window's ticker.
+    IntelPanel.Refresh = Refresh
 end
 
 -- ******************************** Show / Hide / Toggle BG General Screen *******************************
-local function HideBgGeneralScreen()
+-- Single merged window (was three frames): callout grid with AB/WSG/AV tabs on
+-- top, the live enemy-intel table in the middle, dev controls at the bottom.
+-- IntelPanel/DevPanel render their sections into this frame via Populate(); this
+-- owns the frame, backdrop, drag, position, and the one refresh ticker.
+function HideBgGeneralScreen()
     if _G["BgGeneralWindow"] then
         _G["BgGeneralWindow"]:Hide()
         _G["BgGeneralWindow"] = nil
     end
+    TitanBgGeneralSaved.shown = false
 end
 
-local function ShowBgGeneralScreen()
+function ShowBgGeneralScreen()
     if _G["BgGeneralWindow"] then
         return
     end
 
-    local abCols      = 5
     local rows        = 6
     local size        = 22
     local hGap, vGap  = 5, 5
-    local pad         = 10
+    local pad         = 12
     local titleH      = 16
     local titleGap    = 4
     local tabH        = 22
-    local tabGap      = 4
-    local statsLineH  = 13
-    local statsGap    = 6
-    local statsLines  = 3
-    local statsH      = (statsLines + 1) * statsLineH -- +1 for the "draft" header
+    local tabGap      = 6
+    local abCols      = 5
 
     local function gridWidth(nCols) return nCols * size + (nCols - 1) * hGap end
-
-    -- Window is sized to the widest grid; narrower grids center within it
     local maxCols = math.max(abCols, #wsgCols, #avCols)
     local gridW   = gridWidth(maxCols)
     local gridH   = rows * size + (rows - 1) * vGap
-    local totalW  = pad * 2 + gridW
-    local totalH  = pad * 2 + titleH + titleGap + tabH + tabGap + gridH + statsGap + statsH
+
+    -- Window width is driven by the widest section: the intel table.
+    local W        = IntelPanel.Width(pad)
+    local gridLeft = (W - gridW) / 2
 
     local frame = CreateFrame("Frame", "BgGeneralWindow", UIParent, "BackdropTemplate")
-    frame:SetSize(totalW, totalH)
+    frame:SetSize(W, 200) -- height finalised after the sections are laid out
+    frame:SetFrameStrata("FULLSCREEN_DIALOG")
+    frame:SetToplevel(true)
     frame:SetMovable(true)
     frame:EnableMouse(true)
 
     if TitanBgGeneralSaved.point then
         frame:ClearAllPoints()
         frame:SetPoint(TitanBgGeneralSaved.point, UIParent, TitanBgGeneralSaved.relativePoint, TitanBgGeneralSaved.xOfs, TitanBgGeneralSaved.yOfs)
-        Titan_Debug.Out(ADDON_ID, "Flow", "Restored BgGeneralWindow position")
     else
         frame:SetPoint("CENTER")
-        Titan_Debug.Out(ADDON_ID, "Flow", "Set BgGeneralWindow position to CENTER (default)")
     end
 
     frame:SetBackdrop({
@@ -1648,7 +1532,7 @@ local function ShowBgGeneralScreen()
         tile = true, tileSize = 32, edgeSize = 4,
         insets = { left = 4, right = 4, top = 4, bottom = 4 },
     })
-    frame:SetBackdropColor(0, 0, 0, 1)
+    frame:SetBackdropColor(0, 0, 0, 0.85) -- semi-transparent (user preference)
 
     -- Title bar — drag handle; OnMouseDown/Up avoids the ClearAllPoints jump that broke dragging
     local titleBar = CreateFrame("Button", nil, frame)
@@ -1656,9 +1540,7 @@ local function ShowBgGeneralScreen()
     titleBar:SetPoint("TOPLEFT",  frame, "TOPLEFT",  pad, -pad)
     titleBar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -pad, -pad)
     titleBar:SetScript("OnMouseDown", function(_, button)
-        if button == "LeftButton" then
-            frame:StartMoving()
-        end
+        if button == "LeftButton" then frame:StartMoving() end
     end)
     titleBar:SetScript("OnMouseUp", function(_, button)
         if button == "LeftButton" then
@@ -1675,23 +1557,23 @@ local function ShowBgGeneralScreen()
     titleText:SetText("|cffeda55fBG General|r  ·  drag here")
     titleText:SetPoint("CENTER", titleBar, "CENTER")
 
-    -- Tab buttons
+    -- Tab buttons (centered over the grid)
     local tabOffsetY = -pad - titleH - titleGap
     local tabW = (gridW - 2 * 4) / 3
 
     local tabAB = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     tabAB:SetSize(tabW, tabH)
-    tabAB:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, tabOffsetY)
+    tabAB:SetPoint("TOPLEFT", frame, "TOPLEFT", gridLeft, tabOffsetY)
     tabAB:SetText("AB")
 
     local tabWSG = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     tabWSG:SetSize(tabW, tabH)
-    tabWSG:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + tabW + 4, tabOffsetY)
+    tabWSG:SetPoint("TOPLEFT", frame, "TOPLEFT", gridLeft + tabW + 4, tabOffsetY)
     tabWSG:SetText("WSG")
 
     local tabAV = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     tabAV:SetSize(tabW, tabH)
-    tabAV:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + 2 * (tabW + 4), tabOffsetY)
+    tabAV:SetPoint("TOPLEFT", frame, "TOPLEFT", gridLeft + 2 * (tabW + 4), tabOffsetY)
     tabAV:SetText("AV")
 
     -- Grid containers (each sized to its own grid, centered in the window)
@@ -1732,54 +1614,33 @@ local function ShowBgGeneralScreen()
         selectTab(bgContainers[activeBg])
     end
 
-    -- Live stats footer (AB): bases / resources / headcount, refreshed ~1s.
-    -- Anchored to the window bottom so it never disturbs the grid layout above.
-    -- Marked "draft" — UX review deliberately deferred (user call).
-    local statsHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    statsHeader:SetPoint("BOTTOM", frame, "BOTTOM", 0, pad + statsLines * statsLineH)
-    statsHeader:SetText(MUTE_COLOR .. "\226\128\148 live stats \194\183 draft \226\128\148|r")
+    -- Intel section (summary + enemy table + Announce) below the grid; its summary
+    -- line already shows bases/resources/headcount, replacing the old stats footer.
+    local gridBottom  = gridOffsetY - gridH
+    local intelBottom = IntelPanel.Populate(frame, pad, gridBottom - 8)
 
-    local statLine = {}
-    for i = 1, statsLines do
-        local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        fs:SetPoint("BOTTOM", frame, "BOTTOM", 0, pad + (statsLines - i) * statsLineH)
-        statLine[i] = fs
-    end
+    -- Dev section (status + LEDs + buttons) below the intel table.
+    local devBottom   = DevPanel.Populate(frame, pad, intelBottom - 6)
 
-    local function RefreshStats()
-        if GetActiveBg() ~= "AB" then
-            statLine[1]:SetText(MUTE_COLOR .. "Live stats — AB only|r")
-            statLine[2]:SetText(""); statLine[3]:SetText("")
-            return
-        end
-        local b = GetAbBaseCounts()
-        if b.ready then
-            statLine[1]:SetFormattedText("Bases  %sA %d|r  %sH %d|r%s",
-                ALLY_COLOR, b.ally, HORDE_COLOR, b.horde,
-                b.contested > 0 and ("  |cffffd100" .. b.contested .. " contested|r") or "")
-        else
-            statLine[1]:SetText(MUTE_COLOR .. "Bases  —|r")
-        end
-        local aRes, hRes = GetAbResources()
-        if aRes and hRes then
-            statLine[2]:SetFormattedText("Resources  %s%d|r / %s%d|r", ALLY_COLOR, aRes, HORDE_COLOR, hRes)
-        else
-            statLine[2]:SetText(MUTE_COLOR .. "Resources  —|r")
-        end
-        local aP, hP = GetPlayerCounts()
-        statLine[3]:SetFormattedText("Players  %s%d|r / %s%d|r", ALLY_COLOR, aP, HORDE_COLOR, hP)
-    end
+    frame:SetHeight(-devBottom + pad)
 
+    -- One ticker drives both live sections.
     frame:SetScript("OnUpdate", function(self, elapsed)
-        self._statAcc = (self._statAcc or 0) + elapsed
-        if self._statAcc >= 1 then self._statAcc = 0; RefreshStats() end
+        self._acc = (self._acc or 0) + elapsed
+        if self._acc >= 0.5 then
+            self._acc = 0
+            IntelPanel.Refresh()
+            DevPanel.Refresh()
+        end
     end)
-    RefreshStats()
+    IntelPanel.Refresh()
+    DevPanel.Refresh()
 
+    TitanBgGeneralSaved.shown = true
     _G["BgGeneralWindow"] = frame
 end
 
-local function ToggleBgGeneralScreen()
+function ToggleBgGeneralScreen()
     if _G["BgGeneralWindow"] then
         HideBgGeneralScreen()
     else
@@ -1848,25 +1709,16 @@ autoOpenFrame:SetScript("OnEvent", function()
         Recorder.Stop()
     end
 
-    -- Dev panel: reopen across /reload if it was left open (position restored in Build)
-    DevPanel.RestoreIfOpen()
-
-    -- Live Intel overlay (dev): auto-show on BG entry so we can follow the battle
-    -- live; otherwise just restore it if it was left open across a /reload.
-    if IntelPanel then
-        if GetActiveBg() then
-            IntelPanel.Show()
-        else
-            IntelPanel.RestoreIfOpen()
-        end
-    end
-
-    if not IsAutoOpenEnabled() then
-        return
-    end
+    -- Single merged window: auto-open on BG entry (if the option is on), else
+    -- restore it across a /reload if it was left open. The intel + dev sections
+    -- ride along inside it, so there are no separate panels to restore anymore.
     if GetActiveBg() then
-        ShowBgGeneralScreen()
-        Titan_Debug.Out(ADDON_ID, "Events", "Auto-opened BgGeneralWindow on BG entry")
+        if IsAutoOpenEnabled() then
+            ShowBgGeneralScreen()
+            Titan_Debug.Out(ADDON_ID, "Events", "Auto-opened BgGeneralWindow on BG entry")
+        end
+    elseif TitanBgGeneralSaved.shown then
+        ShowBgGeneralScreen() -- reopen where the user left it (out of BG)
     else
         HideBgGeneralScreen()
     end
