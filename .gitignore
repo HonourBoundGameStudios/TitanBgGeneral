@@ -41,3 +41,11 @@ luac.out
 *.hex
 
 
+
+# Classified crew — central model (Admiral 2026-06-21): crew lives only in the private flagship + ~/.claude
+/.claude/
+/CLAUDE.md
+/GEMINI.md
+/Process/playbooks/
+/Process/WorkingWithClaude.md
+/Process/subspace/
