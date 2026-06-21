@@ -1216,6 +1216,45 @@ function GetAbNodeStates()
     return states
 end
 
+-- AB-5: rule-based advice line from live base control. On-screen only (colour
+-- codes ok). Priority: stop an enemy cap → catch up when behind → hold when
+-- ahead → grab a third when even. Returns a string, or nil (not AB / no data).
+local function GetAbAdvice()
+    if GetActiveBg() ~= "AB" then return nil end
+    local states = GetAbNodeStates()
+    if not next(states) then return nil end
+    local mine   = (UnitFactionGroup("player") == "Alliance") and "A" or "H"
+    local theirs = (mine == "A") and "H" or "A"
+    local ours, them, enemyNode = 0, 0, nil
+    local capNode, capRemain = nil, math.huge
+    for abbr, s in pairs(states) do
+        if s.contested then
+            if s.owner == theirs and (s.remain or 99) < capRemain then -- enemy capping → urgent
+                capNode, capRemain = abbr, s.remain or 0
+            end
+        elseif s.owner == mine then
+            ours = ours + 1
+        elseif s.owner == theirs then
+            them = them + 1
+            enemyNode = enemyNode or abbr
+        end
+    end
+    local function nm(abbr) return nodeAbbrToName[abbr] or abbr end
+    if capNode then
+        return ("|cffff2020DEFEND %s - enemy capping %d:%02d!|r"):format(nm(capNode), math.floor(capRemain / 60), capRemain % 60)
+    end
+    if ours < them then
+        return ("|cffffd100Behind %d-%d - attack %s|r"):format(ours, them, enemyNode and nm(enemyNode) or "a base")
+    end
+    if ours > them and ours >= 3 then
+        return ("|cff33ff33Ahead %d-%d - hold & defend|r"):format(ours, them)
+    end
+    if ours == them then
+        return ("|cffffffffEven %d-%d - grab a 3rd base|r"):format(ours, them)
+    end
+    return ("|cffffffff%d-%d - press the advantage|r"):format(ours, them)
+end
+
 -- Classic AB resource totals from the icon-and-text score widgets (DBM-PvP: 1893
 -- Alliance, 1894 Horde; text is "current/max"). nil when the widgets are absent.
 local function GetAbResources()
@@ -1770,10 +1809,17 @@ function ShowBgGeneralScreen()
     local activeBg = GetActiveBg()
     selectTab((activeBg and bgContainers[activeBg]) or abContainer)
 
-    -- Intel section (summary + enemy table + Announce) below the grid; its summary
-    -- line already shows bases/resources/headcount, replacing the old stats footer.
-    local gridBottom  = gridOffsetY - gridH
-    local intelBottom = IntelPanel.Populate(frame, pad, gridBottom - 8)
+    -- AB-5 advice line (AB tab; blank otherwise), between the grid and the table.
+    local gridBottom = gridOffsetY - gridH
+    local adviceFS = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    adviceFS:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, gridBottom - 2)
+    adviceFS:SetPoint("RIGHT", frame, "RIGHT", -pad, 0)
+    adviceFS:SetJustifyH("CENTER")
+    local function RefreshAdvice() adviceFS:SetText(GetAbAdvice() or "") end
+
+    -- Intel section (summary + enemy table + Announce) below the advice line; its
+    -- summary already shows bases/resources/headcount, replacing the old footer.
+    local intelBottom = IntelPanel.Populate(frame, pad, gridBottom - 2 - 18)
 
     -- Dev section (status + LEDs + buttons) below the intel table.
     local devBottom   = DevPanel.Populate(frame, pad, intelBottom - 6)
@@ -1788,11 +1834,13 @@ function ShowBgGeneralScreen()
             IntelPanel.Refresh()
             DevPanel.Refresh()
             RefreshAbStrip()
+            RefreshAdvice()
         end
     end)
     IntelPanel.Refresh()
     DevPanel.Refresh()
     RefreshAbStrip()
+    RefreshAdvice()
 
     TitanBgGeneralSaved.shown = true
     _G["BgGeneralWindow"] = frame
