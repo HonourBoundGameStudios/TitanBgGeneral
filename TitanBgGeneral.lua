@@ -1935,6 +1935,201 @@ local function GetEnemyIntel()
     return list
 end
 
+-- ******************************** Team-Comp Strategy Engine (TEAM-1) *******************************
+-- The team-composition layer ABOVE the 1v1 MATCHUP: MATCHUP says who *I* fight;
+-- this says what the *raid* does. Diffs both rosters into comp signatures and
+-- emits a plan (posture / FC / focus / split). Reuses the shipped readers —
+-- GroupMembers (ours) + GetEnemyIntel (theirs) — never re-derives roster reading.
+-- Research: Research/team-comp-strategy-research.md. Debug surface: /bgcomp.
+
+-- Friendly roster reader, lifted to file scope so both the Plan board and the
+-- comp engine share ONE implementation. In a BG the group is a raid → the 6th
+-- GetRaidRosterInfo return is the locale-independent class token; solo/party
+-- fall back to UnitClass's 2nd return (same token).
+local function GroupMembers()
+    local list = {}
+    local n = GetNumGroupMembers() or 0
+    if IsInRaid() then
+        for i = 1, n do
+            local name, _, _, _, _, fileName = GetRaidRosterInfo(i)
+            if name then list[#list + 1] = { name = name, class = fileName } end
+        end
+    else
+        list[#list + 1] = { name = UnitName("player"), class = select(2, UnitClass("player")) }
+        for i = 1, n - 1 do
+            local u = "party" .. i
+            if UnitExists(u) then list[#list + 1] = { name = UnitName(u), class = select(2, UnitClass(u)) } end
+        end
+    end
+    return list
+end
+
+local FC_LADDER      = { "DRUID", "WARRIOR", "HUNTER", "MAGE" } -- best flag carrier first (research B3)
+local RANGED_CLASSES = { HUNTER = true }                        -- physical ranged
+local CASTER_CLASSES = { MAGE = true, WARLOCK = true, PRIEST = true }
+-- PALADIN/SHAMAN/DRUID hybrids fall to the melee bucket by default — a documented
+-- count-level approximation (Research §Risks); the healer prior pulls the real
+-- healers back out first, so only their DPS specs land in melee.
+
+-- posture → per-BG plan copy. WSG split is of 10; AB (15v15) is a node policy.
+local COMP_PLAN = {
+    WSG = {
+        PRESS    = { off = 7, def = 3, line = "stack offense, run the flag, out-heal them mid" },
+        STANDARD = { off = 6, def = 4, line = "even split — win the first pick, then push" },
+        TURTLE   = { off = 3, def = 7, line = "defend the FC, deny their cap, farm their GY" },
+    },
+    AB = {
+        PRESS    = { line = "hold 3, contest a 4th, mass Blacksmith" },
+        STANDARD = { line = "hold nearest 3, 1 on backline, mass Blacksmith" },
+        TURTLE   = { line = "collapse to 3, defend, win on resource rate" },
+    },
+}
+
+-- FC ladder class → carrier plan (WSG). The requiresHealer gate is load-bearing:
+-- a Warrior FC is top-tier ONLY with a pocket healer, else it's the wrong pick.
+local FC_PLAN = {
+    DRUID   = { escort = "1 healer + 1 peel", requiresHealer = false, note = "shapeshift breaks snares/poly" },
+    WARRIOR = { escort = "1 dedicated healer", requiresHealer = true,  note = "top-tier only with a pocket healer" },
+    HUNTER  = { escort = "+1 defense",         requiresHealer = false, note = "kite carrier, weak under focus" },
+    MAGE    = { escort = "+1 defense",         requiresHealer = false, note = "blink/nova carrier, squishy" },
+}
+
+local function TitleClass(c) return c and (c:sub(1, 1) .. c:sub(2):lower()) or "?" end
+
+-- Reduce a roster (list of { classToken, role? }) to a comp signature. Live role
+-- from ResolveRole wins ("HEAL"/"CASTER"/"MELEE" = confirmed); everything else
+-- ("heal?"/"DPS"/nil) falls to the class prior. `healers` is the prior ceiling
+-- (over-counts shadow/boomkin/feral, biases toward TURTLE = the safe direction);
+-- `confirmedHealers` is the CLEU-confirmed floor.
+local function CompSignature(roster)
+    local sig = { counts = {}, healers = 0, confirmedHealers = 0,
+                  melee = 0, ranged = 0, caster = 0, size = 0, fc = {} }
+    for _, p in ipairs(roster) do
+        local c, role = p.classToken, p.role
+        if c then
+            sig.counts[c] = (sig.counts[c] or 0) + 1
+            sig.size = sig.size + 1
+            if role == "HEAL" then
+                sig.healers = sig.healers + 1; sig.confirmedHealers = sig.confirmedHealers + 1
+            elseif role == "CASTER" then
+                sig.caster = sig.caster + 1
+            elseif role == "MELEE" then
+                sig.melee = sig.melee + 1
+            elseif HEALER_CAPABLE[c] then      -- no confirmed role → class prior
+                sig.healers = sig.healers + 1
+            elseif CASTER_CLASSES[c] then
+                sig.caster = sig.caster + 1
+            elseif RANGED_CLASSES[c] then
+                sig.ranged = sig.ranged + 1
+            else
+                sig.melee = sig.melee + 1
+            end
+        end
+    end
+    for _, fcClass in ipairs(FC_LADDER) do
+        if (sig.counts[fcClass] or 0) > 0 then sig.fc[#sig.fc + 1] = fcClass end
+    end
+    return sig
+end
+
+-- (ourSig, theirSig, bg) → recommended plan. ΔH (healer differential) is the
+-- master posture switch; FC pick walks our ladder honouring requiresHealer;
+-- focus = enemy healer classes (by count) then their FC; split from COMP_PLAN.
+local function ComputeTeamPlan(ourSig, theirSig, bg)
+    local dH = ourSig.healers - theirSig.healers
+    local posture = (dH >= 2 and "PRESS") or (dH <= -2 and "TURTLE") or "STANDARD"
+    local haveHealer = ourSig.healers > 0
+
+    local fc
+    if bg == "WSG" then
+        for _, cls in ipairs(ourSig.fc) do
+            local p = FC_PLAN[cls]
+            if p and (not p.requiresHealer or haveHealer) then
+                fc = { class = cls, escort = p.escort, note = p.note }; break
+            end
+        end
+        if not fc then
+            fc = { class = ourSig.fc[1] or "ANY", escort = "extra defense",
+                   note = "no ideal carrier — flag more defense" }
+        end
+        -- No healer at all → step the posture one notch toward TURTLE (elseif, so
+        -- it never double-steps PRESS straight past STANDARD).
+        if not haveHealer then
+            if posture == "PRESS" then posture = "STANDARD"
+            elseif posture == "STANDARD" then posture = "TURTLE" end
+        end
+    end
+
+    local focus = {}
+    local healerClasses = {}
+    for c in pairs(theirSig.counts) do
+        if HEALER_CAPABLE[c] then healerClasses[#healerClasses + 1] = c end
+    end
+    table.sort(healerClasses, function(a, b) return theirSig.counts[a] > theirSig.counts[b] end)
+    for _, c in ipairs(healerClasses) do
+        focus[#focus + 1] = ("%dx %s"):format(theirSig.counts[c], TitleClass(c))
+    end
+    if theirSig.fc[1] then focus[#focus + 1] = TitleClass(theirSig.fc[1]) .. " (FC)" end
+
+    local copy = (COMP_PLAN[bg] or {})[posture] or {}
+    local split
+    if bg == "WSG" and copy.off then
+        local off, def = copy.off, copy.def
+        if theirSig.melee >= 5 then off, def = off - 1, def + 1 end -- peel-heavy enemy → +1 defense
+        split = { off = off, def = def }
+    end
+
+    return {
+        posture = posture, dH = dH, line = copy.line or "",
+        fc = fc, focus = focus, split = split,
+        ourHealers = ourSig.healers, theirHealers = theirSig.healers,
+        theirConfirmed = theirSig.confirmedHealers,
+    }
+end
+
+-- Assemble both signatures from the live readers and compute the plan, or
+-- (nil, reason) when there isn't enough to advise. WSG/AB only for v1.
+local function BuildTeamPlan()
+    local bg = GetActiveBg()
+    if bg ~= "WSG" and bg ~= "AB" then
+        return nil, bg and (bg .. " not supported (WSG/AB only)") or "not in a battleground"
+    end
+    local theirs = {}
+    for _, e in ipairs(GetEnemyIntel()) do
+        theirs[#theirs + 1] = { classToken = e.classToken, role = e.role }
+    end
+    if #theirs == 0 then return nil, "enemy roster not loaded yet — open the scoreboard or wait a few seconds" end
+    local ours = {}
+    for _, m in ipairs(GroupMembers()) do ours[#ours + 1] = { classToken = m.class } end
+
+    local ourSig, theirSig = CompSignature(ours), CompSignature(theirs)
+    return ComputeTeamPlan(ourSig, theirSig, bg), nil, ourSig, theirSig
+end
+
+-- /bgcomp — debug surface for TEAM-1 (RED→GREEN without the TEAM-2 board UI).
+-- Prints the computed plan locally; never sends to chat (that's TEAM-2's opt-in
+-- Broadcast button).
+local function PrintTeamPlan()
+    local plan, reason = BuildTeamPlan()
+    if not plan then
+        print("|cffeda55fBG General|r comp: " .. (reason or "no plan"))
+        return
+    end
+    local confirmNote = (plan.theirConfirmed < plan.theirHealers)
+        and (" |cff808080(" .. plan.theirConfirmed .. " confirmed)|r") or ""
+    print(("|cffeda55fBG General|r Comp plan |cffffd100[%s]|r %s  (healers %d vs %d, diff %+d%s)"):format(
+        plan.posture, plan.line, plan.ourHealers, plan.theirHealers, plan.dH, confirmNote))
+    if plan.fc then
+        print(("  FC: %s — %s%s"):format(TitleClass(plan.fc.class), plan.fc.escort,
+            (plan.fc.note ~= "") and (" (" .. plan.fc.note .. ")") or ""))
+    end
+    if plan.split then print(("  Split: O %d / D %d"):format(plan.split.off, plan.split.def)) end
+    if #plan.focus > 0 then print("  Focus: " .. table.concat(plan.focus, ", ")) end
+end
+
+SLASH_TITANBGGENERALCOMP1 = "/bgcomp"
+SlashCmdList["TITANBGGENERALCOMP"] = PrintTeamPlan
+
 -- ******************************** Live Intel overlay (dev) *******************************
 -- A large, movable dev overlay that follows the live battle in real time: base
 -- control, resources, headcount, and a danger-ranked enemy table (class-coloured,
@@ -2298,23 +2493,7 @@ do
     end
 
     -- Current group as { name=, class= }. Solo shows just the player.
-    local function GroupMembers()
-        local list = {}
-        local n = GetNumGroupMembers() or 0
-        if IsInRaid() then
-            for i = 1, n do
-                local name, _, _, _, _, fileName = GetRaidRosterInfo(i)
-                if name then list[#list + 1] = { name = name, class = fileName } end
-            end
-        else
-            list[#list + 1] = { name = UnitName("player"), class = select(2, UnitClass("player")) }
-            for i = 1, n - 1 do
-                local u = "party" .. i
-                if UnitExists(u) then list[#list + 1] = { name = UnitName(u), class = select(2, UnitClass(u)) } end
-            end
-        end
-        return list
-    end
+    -- GroupMembers() is lifted to file scope (shared with the TEAM-1 comp engine).
 
     -- Broadcast the plan grouped by assignment, chat-safe (" // ", never a bare "|").
     function PlanBoard.Broadcast()
