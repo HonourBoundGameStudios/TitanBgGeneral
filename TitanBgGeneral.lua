@@ -1207,6 +1207,27 @@ do
     end
 end
 
+-- WSG-3: live FC enrichment for a WSG callout, mirroring AbCalloutSuffix. For the
+-- EFC / FC columns, append the live carrier name + health (+ "LOW" when badly
+-- hurt, + "(dropped)") from FlagState, so a call reads "KILL EFC Kruelhand 34%
+-- LOW" instead of a bare "KILL EFC". Plain ASCII (chat-safe, no "|"). Location
+-- columns (MID/RAMP/TUN) and non-WSG return "".
+local WSG_LOW_HP = 35
+local function WsgCalloutSuffix(colAbbr)
+    if GetActiveBg() ~= "WSG" then return "" end
+    if colAbbr ~= "EFC" and colAbbr ~= "FC" then return "" end
+    local v = FlagState.GetView()
+    local fc = (colAbbr == "EFC") and v.efc or v.ffc
+    if not (fc and fc.name and fc.state ~= "base") then return "" end
+    local out = " " .. (fc.name:match("^[^-]+") or fc.name)
+    if fc.health then
+        out = out .. " " .. fc.health .. "%"
+        if fc.health <= WSG_LOW_HP then out = out .. " LOW" end
+    end
+    if fc.state == "dropped" then out = out .. " (dropped)" end
+    return out
+end
+
 -- ******************************** Build AB Grid *******************************
 local function BuildAbGrid(parent, size, hGap, vGap)
     local cols, rows = 5, 6
@@ -1276,7 +1297,10 @@ end
 
 -- ******************************** Build Column Grid (WSG / AV) *******************************
 -- Generic location-columns × action-rows grid; colDefs entries carry abbr/full/icon.
-local function BuildColGrid(parent, size, hGap, vGap, colDefs, rowActions)
+-- suffixFn(colAbbr) -> string is optional (WSG-3): appended to the sent callout
+-- so a column can enrich its message with live state (WSG FC name/health). AV
+-- passes none.
+local function BuildColGrid(parent, size, hGap, vGap, colDefs, rowActions, suffixFn)
     for col = 1, #colDefs do
         local colData = colDefs[col]
         for row = 1, #rowActions do
@@ -1325,7 +1349,7 @@ local function BuildColGrid(parent, size, hGap, vGap, colDefs, rowActions)
                 else
                     msg = msg_default
                 end
-                SendChatMessage(msg, GetChatType())
+                SendChatMessage(msg .. (suffixFn and suffixFn(colData.abbr) or ""), GetChatType())
             end)
         end
     end
@@ -2113,7 +2137,7 @@ function ShowBgGeneralScreen()
     local wsgContainer = CreateFrame("Frame", nil, frame)
     wsgContainer:SetSize(gridWidth(#wsgCols), gridH)
     wsgContainer:SetPoint("TOP", frame, "TOP", 0, gridOffsetY)
-    BuildColGrid(wsgContainer, size, hGap, vGap, wsgCols, wsgRowActions)
+    BuildColGrid(wsgContainer, size, hGap, vGap, wsgCols, wsgRowActions, WsgCalloutSuffix)
     wsgContainer:Hide()
 
     local avContainer = CreateFrame("Frame", nil, frame)
