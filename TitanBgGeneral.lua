@@ -483,7 +483,12 @@ do
     end
 
     -- Merge a match's CLEU threat table (keyed by name) into the permanent DB.
-    function Nemesis.Record(threat)
+    -- Idempotent on the STATS (all peaks), so it is safe to call repeatedly during
+    -- a match for durable mid-match banking (INTEL-2 — the dossier survives a
+    -- /reload or disconnect, not just a clean BG exit). `bumpMet` counts the
+    -- encounter and must be passed ONCE per match (at match end via Nemesis.Record),
+    -- never on the periodic tick, or "times met" would inflate every 5 seconds.
+    function Nemesis.Merge(threat, bumpMet)
         if type(threat) ~= "table" then return end
         local db, now = store(), time()
         for name, e in pairs(threat) do
@@ -497,7 +502,7 @@ do
                 rec.healOthers  = math.max(rec.healOthers or 0, e.healOthers or 0)
                 rec.magicDamage = math.max(rec.magicDamage or 0, e.magicDamage or 0)
                 rec.physDamage  = math.max(rec.physDamage or 0, e.physDamage or 0)
-                rec.met   = (rec.met or 0) + 1
+                if bumpMet then rec.met = (rec.met or 0) + 1 end
                 rec.last  = now
                 db[name]  = rec
             end
@@ -511,6 +516,10 @@ do
             for i = 1, n - MAX_ENTRIES do db[arr[i].k] = nil end
         end
     end
+
+    -- Match-end bank: merge the final stats AND count the encounter once. Called
+    -- from Recorder.Stop; the mid-match tick uses Nemesis.Merge (no met bump).
+    function Nemesis.Record(threat) Nemesis.Merge(threat, true) end
 
     function Nemesis.IsNemesis(name)
         local rec = name and store()[name]
@@ -852,6 +861,7 @@ do
         local req = RequestBattlefieldScoreData or (C_PvP and C_PvP.RequestBattlefieldScoreData)
         snapshotTicker = C_Timer.NewTicker(5, function()
             CaptureThreat()
+            Nemesis.Merge(threat) -- INTEL-2: durable mid-match banking (stats only; met counted at Stop)
             if req then req() end
         end)
         if req then req() end
