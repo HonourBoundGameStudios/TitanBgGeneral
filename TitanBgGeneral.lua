@@ -1744,17 +1744,20 @@ do
     -- prints locally to the leader. The auto pre-match path (broadcast=false) stays
     -- silent when nobody known is present; only the explicit command reports empty,
     -- and it reports to the user locally — never an empty message to the team.
+    -- Returns true when a briefing was actually shown/sent, false otherwise — the
+    -- auto path uses this to retry if the enemy roster had not loaded yet.
     function IntelPanel.ShowBriefing(broadcast)
         local line = IntelPanel.BuildBriefing()
         if not line then
             if broadcast then print("|cffeda55fBG General|r Pre-match intel: no known enemies on the board.") end
-            return
+            return false
         end
         if broadcast then
             SendChatMessage(line, GetChatType())
         else
             print("|cffeda55fBG General|r " .. line)
         end
+        return true
     end
 
     -- Width needed for the table = pad + last column's right edge + pad.
@@ -2079,11 +2082,15 @@ autoOpenFrame:SetScript("OnEvent", function()
         -- to the leader (broadcasting to team is the explicit `/bgthreat brief`).
         if not preBriefed then
             preBriefed = true
-            C_Timer.After(5, function()
-                if GetActiveBg() and IntelPanel and IntelPanel.ShowBriefing then
-                    IntelPanel.ShowBriefing(false)
+            -- Try at 6s; if the enemy roster had not loaded yet (nothing shown),
+            -- retry once at +8s. Local print only, so a retry is harmless.
+            local function tryBrief(attempt)
+                if not (GetActiveBg() and IntelPanel and IntelPanel.ShowBriefing) then return end
+                if not IntelPanel.ShowBriefing(false) and attempt < 2 then
+                    C_Timer.After(8, function() tryBrief(attempt + 1) end)
                 end
-            end)
+            end
+            C_Timer.After(6, function() tryBrief(1) end)
         end
     else
         ThreatProvider.Stop()
