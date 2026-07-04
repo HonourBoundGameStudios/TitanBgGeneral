@@ -2060,7 +2060,9 @@ local function ComputeTeamPlan(ourSig, theirSig, bg)
         end
     end
 
-    local focus = {}
+    -- focus = plain strings (chat/print, no colour codes); focusData = structured
+    -- {class,count,fc} so the board can class-colour it. Same order/content.
+    local focus, focusData = {}, {}
     local healerClasses = {}
     for c in pairs(theirSig.counts) do
         if HEALER_CAPABLE[c] then healerClasses[#healerClasses + 1] = c end
@@ -2068,8 +2070,12 @@ local function ComputeTeamPlan(ourSig, theirSig, bg)
     table.sort(healerClasses, function(a, b) return theirSig.counts[a] > theirSig.counts[b] end)
     for _, c in ipairs(healerClasses) do
         focus[#focus + 1] = ("%dx %s"):format(theirSig.counts[c], TitleClass(c))
+        focusData[#focusData + 1] = { class = c, count = theirSig.counts[c] }
     end
-    if theirSig.fc[1] then focus[#focus + 1] = TitleClass(theirSig.fc[1]) .. " (FC)" end
+    if theirSig.fc[1] then
+        focus[#focus + 1] = TitleClass(theirSig.fc[1]) .. " (FC)"
+        focusData[#focusData + 1] = { class = theirSig.fc[1], fc = true }
+    end
 
     local copy = (COMP_PLAN[bg] or {})[posture] or {}
     local split
@@ -2081,7 +2087,7 @@ local function ComputeTeamPlan(ourSig, theirSig, bg)
 
     return {
         posture = posture, dH = dH, line = copy.line or "",
-        fc = fc, focus = focus, split = split,
+        fc = fc, focus = focus, focusData = focusData, split = split,
         ourHealers = ourSig.healers, theirHealers = theirSig.healers,
         theirConfirmed = theirSig.confirmedHealers,
     }
@@ -2652,8 +2658,13 @@ do
             if plan.split then
                 planLine(("|cff808080Split:|r O %d |cff808080/|r D %d"):format(plan.split.off, plan.split.def))
             end
-            if #plan.focus > 0 then
-                planLine("|cff808080Focus:|r " .. table.concat(plan.focus, ", "))
+            if plan.focusData and #plan.focusData > 0 then
+                local segs = {}
+                for _, f in ipairs(plan.focusData) do
+                    local label = (f.count and (f.count .. "x ") or "") .. TitleClass(f.class) .. (f.fc and " (FC)" or "")
+                    segs[#segs + 1] = ClassColor(f.class) .. label .. "|r"
+                end
+                planLine("|cff808080Focus:|r " .. table.concat(segs, "|cff808080, |r"))
             end
             planLine("|cff707070estimated from class — sharpens as the fight develops|r", "GameFontDisableSmall")
         end
