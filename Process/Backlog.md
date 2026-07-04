@@ -48,6 +48,18 @@ pending in-game GREEN). These close out the epic.
 - [ ] **[REL-3] Multi-flavor verification pass** — full smoke checklist on retail and Cata Classic, flavor guards where APIs diverge
 - [ ] **[REL-4] CurseForge release** — changelog, `.toc` version bump, packaging via `.pkgmeta`
 
+## Epic 7 — Team-Comp Strategy Advisor (2026-07-04)
+
+The team-composition layer ABOVE the shipped 1v1 `MATCHUP`: diff both rosters,
+recommend a raid-level plan. Research: `Research/team-comp-strategy-research.md`.
+**Design decided with the Admiral 2026-07-04** — surface on the `/bgplan` Battle
+Plan board; evaluate at match start then live-refine; v1 ships the robust core
+only (soft archetype/node layer held for v2).
+
+- [ ] **[TEAM-1] Comp-signature engine (pure logic)** — `CompSignature(roster)` reducer (class counts, healer count via `HEALER_CAPABLE` prior + `confirmedHealers` from `ResolveRole`, melee/ranged/caster split, FC ladder) fed by the *existing* readers (`GroupMembers` ours, `CaptureRoster`/`GetEnemyIntel` theirs — do NOT re-derive roster reading). `ComputeTeamPlan(ourSig, theirSig, bg)` → `{posture, fc, focus, split}` from `COMP_PLAN`/`FC_PLAN` tables: ΔH master switch (±2), FC ladder + `requiresHealer` gate, focus = enemy healers then FC. Debug surface `/bgcomp` prints the plan (RED→GREEN without UI). **In-game gate first:** `/dump UnitGroupRolesAssigned` in an Era BG raid — if all `"NONE"`, our healer count = class prior (expected). Branch **AB=15v15** vs WSG=10.
+- [ ] **[TEAM-2] Plan board "Suggested Plan" section** — render the TEAM-1 plan on the `/bgplan` board (posture + reason, FC + escort, focus list, O/D split), class-coloured; **Broadcast** (one-shot to BG chat via `GetChatType()`) + **Refresh** buttons; caveat line "healer counts estimated, tightens as the fight develops". Live-refine on the board's ticker. UI/UX-reviewer pass required (screenshot).
+- v2 (deferred): soft `ENEMY_ARCHETYPE` headlines + AB node-allocation detail; leader-tunable thresholds; optional toggle.
+
 ## Parked / Ideas
 
-- **10v10 team-strategy advisor** (to discuss 2026-07-03) — read the whole enemy *and* friendly comp (both rosters), evaluate the team-level matchup, and suggest the best strat for it (opener split, who to focus, defend/offense balance). Team-composition scale, above the per-enemy `MATCHUP` 1v1 advice we already ship. **Research done** (see `Research/team-comp-strategy-research.md`, 2026-07-04): both rosters are already read by shipped code (`GroupMembers` ours / `CaptureRoster` theirs) and never diffed; the whole feature is a `CompSignature` reducer + a per-BG rule table (`COMP_PLAN`/`FC_PLAN`/`ENEMY_ARCHETYPE`), healer-differential ΔH as the master posture switch. One in-game gate (`UnitGroupRolesAssigned` on Era) + note **AB is 15v15** not 10v10. Design conversation still pending with the Admiral.
+- _(none)_
