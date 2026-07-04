@@ -1256,6 +1256,40 @@ local function WsgCalloutSuffix(colAbbr)
     return out
 end
 
+-- ******************************** Custom callout overrides (CMD-4) *******************************
+-- Per-cell override of the DEFAULT (unmodified) click message, keyed by grid+cell,
+-- persisted under TitanBgGeneralSaved.customCallouts. Right-click any grid cell to
+-- set one; a blank text reverts to the generated default. Modifier clicks (Shift/
+-- Ctrl/Alt) always use their generated messages. Live suffixes (AB node state /
+-- WSG FC) are still appended, so a custom base keeps its enrichment.
+local function CalloutKey(gridId, a, b) return gridId .. ":" .. tostring(a) .. ":" .. tostring(b) end
+local function GetCalloutOverride(key)
+    local s = TitanBgGeneralSaved.customCallouts
+    return (type(s) == "table") and s[key] or nil
+end
+local function SetCalloutOverride(key, text)
+    local s = TitanBgGeneralSaved.customCallouts
+    if type(s) ~= "table" then s = {}; TitanBgGeneralSaved.customCallouts = s end
+    s[key] = (text and text:gsub("%s", "") ~= "") and text or nil
+end
+StaticPopupDialogs["TITANBGGENERAL_EDIT_CALLOUT"] = {
+    text = "Custom callout (blank = default):",
+    button1 = SAVE or "Save",
+    button2 = CANCEL or "Cancel",
+    hasEditBox = true,
+    maxLetters = 240,
+    OnShow = function(self, data)
+        self.editBox:SetText((data and (GetCalloutOverride(data.key) or data.default)) or "")
+        self.editBox:HighlightText()
+    end,
+    OnAccept = function(self, data)
+        if data then SetCalloutOverride(data.key, self.editBox:GetText()) end
+    end,
+    EditBoxOnEnterPressed = function(self) self:GetParent().button1:Click() end,
+    EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
 -- ******************************** Build AB Grid *******************************
 local function BuildAbGrid(parent, size, hGap, vGap)
     local cols, rows = 5, 6
@@ -1294,30 +1328,42 @@ local function BuildAbGrid(parent, size, hGap, vGap)
             label:SetPoint("CENTER", btn, "CENTER")
             label:SetWidth(size)
 
+            local key = CalloutKey("AB", abbr, row)
+            local function defaultMsg() return row .. " " .. cellActions[row][col].default .. " " .. fullName end
+
             btn:SetScript("OnEnter", function(self)
                 GameTooltip:SetOwner(UIParent, "ANCHOR_BOTTOMRIGHT")
+                local override = GetCalloutOverride(key)
+                local defLine = override and ("|cffffd100" .. override .. "|r (custom)")
+                    or ("|cffffffff" .. cellActions[row][col].default .. " " .. row .. " or more")
                 GameTooltip:SetText(
-                    "|cff00ff00(Click)|r |cffffffff"       .. cellActions[row][col].default .. " " .. row .. " or more\n" ..
+                    "|cff00ff00(Click)|r "                 .. defLine .. "\n" ..
                     "|cff00ff00(Shift+Click)|r |cffffffff" .. cellActions[row][col].shift   .. " " .. row .. " or more\n" ..
                     "|cff00ff00(Ctrl+Click)|r |cffffffff"  .. cellActions[row][col].ctrl    .. " " .. row .. " or more\n" ..
-                    "|cff00ff00(Alt+Click)|r |cffffffff"   .. cellActions[row][col].alt     .. "\n"
+                    "|cff00ff00(Alt+Click)|r |cffffffff"   .. cellActions[row][col].alt     .. "\n" ..
+                    "|cff808080(Right-click: customize this callout)|r"
                 )
                 GameTooltip:Show()
             end)
             btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-            btn:SetScript("OnClick", function()
-                local action
-                if IsShiftKeyDown() then
-                    action = cellActions[row][col].shift
-                elseif IsControlKeyDown() then
-                    action = cellActions[row][col].ctrl
-                elseif IsAltKeyDown() then
-                    action = cellActions[row][col].alt
-                else
-                    action = cellActions[row][col].default
+            btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+            btn:SetScript("OnClick", function(_, mouseButton)
+                if mouseButton == "RightButton" then
+                    StaticPopup_Show("TITANBGGENERAL_EDIT_CALLOUT", nil, nil, { key = key, default = defaultMsg() })
+                    return
                 end
-                SendChatMessage(row .. " " .. action .. " " .. fullName .. AbCalloutSuffix(abbr), GetChatType())
+                local base
+                if IsShiftKeyDown() then
+                    base = row .. " " .. cellActions[row][col].shift .. " " .. fullName
+                elseif IsControlKeyDown() then
+                    base = row .. " " .. cellActions[row][col].ctrl .. " " .. fullName
+                elseif IsAltKeyDown() then
+                    base = row .. " " .. cellActions[row][col].alt .. " " .. fullName
+                else
+                    base = GetCalloutOverride(key) or defaultMsg()
+                end
+                SendChatMessage(base .. AbCalloutSuffix(abbr), GetChatType())
             end)
         end
     end
@@ -1327,8 +1373,8 @@ end
 -- Generic location-columns × action-rows grid; colDefs entries carry abbr/full/icon.
 -- suffixFn(colAbbr) -> string is optional (WSG-3): appended to the sent callout
 -- so a column can enrich its message with live state (WSG FC name/health). AV
--- passes none.
-local function BuildColGrid(parent, size, hGap, vGap, colDefs, rowActions, suffixFn)
+-- passes none. gridId ("WSG"/"AV") keys per-cell custom overrides (CMD-4).
+local function BuildColGrid(parent, size, hGap, vGap, colDefs, rowActions, suffixFn, gridId)
     for col = 1, #colDefs do
         local colData = colDefs[col]
         for row = 1, #rowActions do
@@ -1353,20 +1399,30 @@ local function BuildColGrid(parent, size, hGap, vGap, colDefs, rowActions, suffi
             local msg_shift   = rowAction .. " " .. colData.full .. " NOW"
             local msg_ctrl    = "HELP " .. colData.full
             local msg_alt     = colData.full
+            local key = CalloutKey(gridId or "COL", colData.abbr, rowAction)
 
             btn:SetScript("OnEnter", function(self)
                 GameTooltip:SetOwner(UIParent, "ANCHOR_BOTTOMRIGHT")
+                local override = GetCalloutOverride(key)
+                local defLine = override and ("|cffffd100" .. override .. "|r (custom)")
+                    or ("|cffffffff" .. msg_default)
                 GameTooltip:SetText(
-                    "|cff00ff00(Click)|r |cffffffff" .. msg_default .. "\n" ..
+                    "|cff00ff00(Click)|r " .. defLine .. "\n" ..
                     "|cff00ff00(Shift)|r |cffffffff"  .. msg_shift   .. "\n" ..
                     "|cff00ff00(Ctrl)|r |cffffffff"   .. msg_ctrl    .. "\n" ..
-                    "|cff00ff00(Alt)|r |cffffffff"    .. msg_alt     .. "\n"
+                    "|cff00ff00(Alt)|r |cffffffff"    .. msg_alt     .. "\n" ..
+                    "|cff808080(Right-click: customize this callout)|r"
                 )
                 GameTooltip:Show()
             end)
             btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-            btn:SetScript("OnClick", function()
+            btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+            btn:SetScript("OnClick", function(_, mouseButton)
+                if mouseButton == "RightButton" then
+                    StaticPopup_Show("TITANBGGENERAL_EDIT_CALLOUT", nil, nil, { key = key, default = msg_default })
+                    return
+                end
                 local msg
                 if IsShiftKeyDown() then
                     msg = msg_shift
@@ -1375,7 +1431,7 @@ local function BuildColGrid(parent, size, hGap, vGap, colDefs, rowActions, suffi
                 elseif IsAltKeyDown() then
                     msg = msg_alt
                 else
-                    msg = msg_default
+                    msg = GetCalloutOverride(key) or msg_default
                 end
                 SendChatMessage(msg .. (suffixFn and suffixFn(colData.abbr) or ""), GetChatType())
             end)
@@ -2503,13 +2559,13 @@ function ShowBgGeneralScreen()
     local wsgContainer = CreateFrame("Frame", nil, frame)
     wsgContainer:SetSize(gridWidth(#wsgCols), gridH)
     wsgContainer:SetPoint("TOP", frame, "TOP", 0, gridOffsetY)
-    BuildColGrid(wsgContainer, size, hGap, vGap, wsgCols, wsgRowActions, WsgCalloutSuffix)
+    BuildColGrid(wsgContainer, size, hGap, vGap, wsgCols, wsgRowActions, WsgCalloutSuffix, "WSG")
     wsgContainer:Hide()
 
     local avContainer = CreateFrame("Frame", nil, frame)
     avContainer:SetSize(gridWidth(#avCols), gridH)
     avContainer:SetPoint("TOP", frame, "TOP", 0, gridOffsetY)
-    BuildColGrid(avContainer, size, hGap, vGap, avCols, avRowActions)
+    BuildColGrid(avContainer, size, hGap, vGap, avCols, avRowActions, nil, "AV")
     avContainer:Hide()
 
     local function selectTab(container)
