@@ -107,7 +107,7 @@ User call: AV gets a panel too, alongside the WSG/AB advisor focus.
 Directing players, not just announcing. (CMD-5/6/7 — the threat advisor —
 moved to Epic 1.5 on 2026-06-10, IDs kept.)
 
-- [ ] **[CMD-1] Role assignment board** — assign raid members to nodes/roles (O/D, FC escort) and broadcast the plan
+- [x] **[CMD-1] Role assignment board** (2026-07-04; **in-game GREEN PENDING**) — new `PlanBoard` window (`/bgplan`): lists group members (class-coloured; raid/party/solo via `GetRaidRosterInfo`/party units), each with a **click-to-cycle** BG-aware assignment button (AB=nodes+Roam/Def, WSG=FC-D/Offense/Mid/EFC/Return/Roam, AV=Off/Def/GYs/towers/Boss). Assignments persist under `TitanBgGeneralSaved.plan` (keyed by name; survive reload). **Broadcast** sends the plan grouped by role to the raid via `GetChatType()` (chat-safe `" // "`). Own movable window (persisted position) — never touches the callout panel; it's the hub CMD-2/3 extend. Rebuilt wholesale on open/Refresh/Clear so group + BG changes reflect. _Caveats:_ raids >25 truncate the list (noted in-window); solo shows just you. **Verify next session:** open in a group, cycle roles, Broadcast, confirm the grouped line lands in the right channel.
 - [ ] **[CMD-2] Opening split caller** — one click sends the standard opener ("5 ST / 5 BS / rest GM" style presets, editable)
 - [ ] **[CMD-3] Raid-marker integration** — mark FCs/targets when leader/assist
 - [ ] **[CMD-4] Custom callout editor** — per-cell message editing persisted in SavedVariables

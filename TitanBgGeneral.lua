@@ -1976,6 +1976,193 @@ do
     IntelPanel.Refresh = Refresh
 end
 
+-- ******************************** Battle Plan board (CMD-1/2/3) *******************************
+-- Leader tool (opened with /bgplan): assign each group member to a node/role,
+-- broadcast the plan to the raid, fire opening-split presets (CMD-2), and drop
+-- raid markers (CMD-3). Its own movable window so it never risks the callout
+-- panel. Assignments persist under TitanBgGeneralSaved.plan keyed by name (stale
+-- names are harmless). Native WoW look: DialogBox backdrop + UIPanelButtonTemplate.
+local PlanBoard = {}
+do
+    local frame
+    local MAX_ROWS = 25 -- covers WSG(10)/AB(15) fully; big AV raids truncate (noted)
+
+    -- BG-aware assignment options cycled per member. "-" (unassigned) is implicit.
+    local PLAN_ROLES = {
+        AB      = { "Stables", "Gold Mine", "Blacksmith", "Lumber Mill", "Farm", "Roam", "Defense" },
+        WSG     = { "FC Defense", "Offense", "Mid", "EFC Kill", "Flag Return", "Roam" },
+        AV      = { "Offense", "Defense", "Snowfall", "Tower Point", "Iceblood", "Boss", "Roam" },
+        default = { "Offense", "Defense", "Roam" },
+    }
+    local function roleList() return PLAN_ROLES[GetActiveBg() or ""] or PLAN_ROLES.default end
+
+    local function store()
+        local s = TitanBgGeneralSaved.plan
+        if type(s) ~= "table" then s = {}; TitanBgGeneralSaved.plan = s end
+        return s
+    end
+
+    -- Next role in the cycle: nil -> first, last -> nil (back to unassigned).
+    local function nextRole(cur)
+        local roles = roleList()
+        if cur == nil then return roles[1] end
+        for i, r in ipairs(roles) do if r == cur then return roles[i + 1] end end
+        return roles[1]
+    end
+
+    local function ClassColor(class)
+        local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+        if c and c.colorStr then return "|c" .. c.colorStr end
+        return "|cffffffff"
+    end
+
+    -- Current group as { name=, class= }. Solo shows just the player.
+    local function GroupMembers()
+        local list = {}
+        local n = GetNumGroupMembers() or 0
+        if IsInRaid() then
+            for i = 1, n do
+                local name, _, _, _, _, fileName = GetRaidRosterInfo(i)
+                if name then list[#list + 1] = { name = name, class = fileName } end
+            end
+        else
+            list[#list + 1] = { name = UnitName("player"), class = select(2, UnitClass("player")) }
+            for i = 1, n - 1 do
+                local u = "party" .. i
+                if UnitExists(u) then list[#list + 1] = { name = UnitName(u), class = select(2, UnitClass(u)) } end
+            end
+        end
+        return list
+    end
+
+    -- Broadcast the plan grouped by assignment, chat-safe (" // ", never a bare "|").
+    function PlanBoard.Broadcast()
+        local groups, order = {}, {}
+        for _, m in ipairs(GroupMembers()) do
+            local label = store()[m.name]
+            if label and label ~= "-" then
+                if not groups[label] then groups[label] = {}; order[#order + 1] = label end
+                groups[label][#groups[label] + 1] = m.name:match("^[^-]+") or m.name
+            end
+        end
+        if #order == 0 then
+            print("|cffeda55fBG General|r No assignments yet — click a member's role button, then Broadcast.")
+            return
+        end
+        local parts = {}
+        for _, label in ipairs(order) do parts[#parts + 1] = label .. ": " .. table.concat(groups[label], ", ") end
+        SendChatMessage("Plan >> " .. table.concat(parts, " // "), GetChatType())
+    end
+
+    function PlanBoard.Hide()
+        if frame then frame:Hide() end
+    end
+
+    -- Build (or rebuild) the whole window: title bar, one row per member, action
+    -- buttons. Rebuilt wholesale on open / Refresh / Clear so a changed group or
+    -- BG is always reflected; assignments survive via the SavedVariables store.
+    local function Build()
+        if frame then frame:Hide(); frame = nil end
+        local pad, rowH, W = 12, 20, 260
+        local members = GroupMembers()
+        local shown = math.min(#members, MAX_ROWS)
+
+        frame = CreateFrame("Frame", "BgGeneralPlanWindow", UIParent, "BackdropTemplate")
+        frame:SetWidth(W)
+        frame:SetFrameStrata("FULLSCREEN_DIALOG")
+        frame:SetToplevel(true)
+        frame:SetMovable(true)
+        frame:EnableMouse(true)
+        frame:SetBackdrop({
+            bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 4,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        frame:SetBackdropColor(0, 0, 0, 0.85)
+
+        if TitanBgGeneralSaved.planPoint then
+            frame:SetPoint(TitanBgGeneralSaved.planPoint, UIParent, TitanBgGeneralSaved.planRelPoint,
+                TitanBgGeneralSaved.planX or 0, TitanBgGeneralSaved.planY or 0)
+        else
+            frame:SetPoint("CENTER", UIParent, "CENTER", 260, 0)
+        end
+
+        local titleBar = CreateFrame("Button", nil, frame)
+        titleBar:SetHeight(16)
+        titleBar:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, -pad)
+        titleBar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -pad, -pad)
+        titleBar:SetScript("OnMouseDown", function(_, b) if b == "LeftButton" then frame:StartMoving() end end)
+        titleBar:SetScript("OnMouseUp", function(_, b)
+            if b == "LeftButton" then
+                frame:StopMovingOrSizing()
+                local p, _, rp, x, y = frame:GetPoint()
+                TitanBgGeneralSaved.planPoint, TitanBgGeneralSaved.planRelPoint = p, rp
+                TitanBgGeneralSaved.planX, TitanBgGeneralSaved.planY = x, y
+            end
+        end)
+        local title = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        title:SetPoint("CENTER", titleBar, "CENTER")
+        title:SetText(("|cffeda55fBattle Plan|r  ·  %s"):format(GetActiveBg() or "no BG"))
+
+        local y = -pad - 16 - 6
+        for i = 1, shown do
+            local m = members[i]
+            local nameFS = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            nameFS:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, y)
+            nameFS:SetWidth(110); nameFS:SetJustifyH("LEFT"); nameFS:SetWordWrap(false)
+            nameFS:SetText(ClassColor(m.class) .. (m.name:match("^[^-]+") or m.name) .. "|r")
+
+            local roleBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+            roleBtn:SetSize(W - pad * 2 - 110 - 4, rowH - 2)
+            roleBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + 110 + 4, y + 1)
+            local function paint() roleBtn:SetText(store()[m.name] or "-") end
+            paint()
+            roleBtn:SetScript("OnClick", function()
+                local nx = nextRole(store()[m.name])
+                store()[m.name] = nx -- nil clears the key back to unassigned
+                paint()
+            end)
+            y = y - rowH
+        end
+        if #members > shown then
+            local moreFS = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            moreFS:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, y)
+            moreFS:SetText(("|cff808080+%d more (raid too large to list)|r"):format(#members - shown))
+            y = y - 14
+        end
+
+        y = y - 6
+        -- Action row: Broadcast / Clear / Refresh / Close.
+        local btns = {
+            { text = "Broadcast", on = function() PlanBoard.Broadcast() end },
+            { text = "Clear",     on = function() TitanBgGeneralSaved.plan = {}; Build() end },
+            { text = "Refresh",   on = function() Build() end },
+            { text = "Close",     on = function() PlanBoard.Hide() end },
+        }
+        local gap = 4
+        local bw = math.floor((W - pad * 2 - (#btns - 1) * gap) / #btns)
+        for i, b in ipairs(btns) do
+            local btn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+            btn:SetSize(bw, 22)
+            btn:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + (i - 1) * (bw + gap), y)
+            btn:SetText(b.text)
+            btn:SetScript("OnClick", b.on)
+        end
+        y = y - 22 - pad
+
+        frame:SetHeight(-y)
+        frame:Show()
+    end
+
+    function PlanBoard.Toggle()
+        if frame and frame:IsShown() then PlanBoard.Hide() else Build() end
+    end
+end
+
+SLASH_TITANBGGENERALPLAN1 = "/bgplan"
+SlashCmdList["TITANBGGENERALPLAN"] = function() PlanBoard.Toggle() end
+
 -- ******************************** Show / Hide / Toggle BG General Screen *******************************
 -- Single merged window (was three frames): callout grid with AB/WSG/AV tabs on
 -- top, the live enemy-intel table in the middle, dev controls at the bottom.
