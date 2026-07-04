@@ -284,6 +284,64 @@ do
     end
 end
 
+-- ******************************** DetailsProvider (VERIF-6) *******************************
+-- Details! damage/healing enrichment. The Era scoreboard reports damageDone/
+-- healingDone as 0 (VERIF-3), and our own CLEU aggregate only sees fights the
+-- player was near. When Details! is installed it has been parsing the same combat
+-- log the whole time, so GetCurrentCombat() yields per-actor totals that backfill
+-- the enemy-intel damage/healing columns + threat ranking (GetEnemyIntel blends
+-- them). Fully optional and defensive: every access is feature-guarded and
+-- pcall-wrapped, returning nil so callers degrade to the CLEU aggregate / class
+-- prior when Details! is absent or its API shape shifts. API verified against the
+-- installed Details source: Details:GetCurrentCombat() -> combat:GetContainer(attr)
+-- (DAMAGE=1, HEAL=2) -> container:ListActors() -> actor.nome / actor.total.
+local DetailsProvider = {}
+do
+    local ATTR_DAMAGE, ATTR_HEAL = 1, 2
+
+    function DetailsProvider.IsAvailable()
+        return Details ~= nil and type(Details.GetCurrentCombat) == "function"
+    end
+
+    -- Fold one attribute container's actors into totals[name][field], keyed by both
+    -- the full "Name-Realm" and the short "Name" so a scoreboard name in either
+    -- form finds it. max() guards against a container listing an actor twice.
+    local function readAttr(combat, attr, totals, field)
+        local container = combat:GetContainer(attr)
+        if not (container and container.ListActors) then return end
+        for _, actor in container:ListActors() do
+            local nome  = actor and actor.nome
+            local total = actor and tonumber(actor.total)
+            if nome and total and total > 0 then
+                local rec = totals[nome]; if not rec then rec = {}; totals[nome] = rec end
+                rec[field] = math.max(rec[field] or 0, total)
+                local short = nome:match("^[^-]+")
+                if short and short ~= nome then
+                    local sr = totals[short]; if not sr then sr = {}; totals[short] = sr end
+                    sr[field] = math.max(sr[field] or 0, total)
+                end
+            end
+        end
+    end
+
+    -- name -> { damage = n, healing = n } for the current combat, or nil if Details
+    -- is absent / has no data / errors. Enemy filtering is the caller's job (it only
+    -- looks up names it already knows are enemies), so pets/NPCs here are harmless.
+    function DetailsProvider.GetTotals()
+        if not DetailsProvider.IsAvailable() then return nil end
+        local ok, totals = pcall(function()
+            local combat = Details:GetCurrentCombat()
+            if not (combat and combat.GetContainer) then return nil end
+            local t = {}
+            readAttr(combat, ATTR_DAMAGE, t, "damage")
+            readAttr(combat, ATTR_HEAL,   t, "healing")
+            return t
+        end)
+        if not ok or not totals or next(totals) == nil then return nil end
+        return totals
+    end
+end
+
 -- Debug surface for the verification session (registered in CLAUDE.md globals):
 -- bare `/bgthreat` prints locally; `/bgthreat announce` calls the deadliest
 -- enemies to BG chat (same action as the Intel panel's Announce Threats button).
@@ -1799,6 +1857,7 @@ end
 local function GetEnemyIntel()
     local myFaction = (UnitFactionGroup("player") == "Horde") and 0 or 1
     local threat = (Recorder.GetThreat and Recorder.GetThreat()) or {}
+    local dtotals = DetailsProvider.GetTotals() -- VERIF-6: Details! totals or nil
     local n = GetNumBattlefieldScores and GetNumBattlefieldScores() or 0
     local list = {}
     if GetBattlefieldScore then
@@ -1809,22 +1868,30 @@ local function GetEnemyIntel()
             if name and faction and faction ~= myFaction then
                 -- Live combat record if we've fought them this match; otherwise
                 -- fall back to the remembered dossier so role + advice show ON
-                -- SIGHT from the name alone (INTEL-1). Damage/healing columns stay
-                -- live-only (0 until they act this match) — memory drives the role.
+                -- SIGHT from the name alone (INTEL-1).
                 local live = threat[name]
-                local t = live or Nemesis.Lookup(name)
+                -- VERIF-6: blend Details! totals (segment-wide, backfills enemies
+                -- our own CLEU never saw) with the CLEU aggregate — take the larger
+                -- of each. Details is totals-only, so a CLEU record (school split +
+                -- healOthers) is still preferred for role; a Details-only enemy gets
+                -- a totals record so role upgrades from class-prior to DPS/HEAL.
+                local d = dtotals and (dtotals[name] or dtotals[name:match("^[^-]+") or name])
+                local damage  = math.max((live and live.damage)  or 0, (d and d.damage)  or 0)
+                local healing = math.max((live and live.healing) or 0, (d and d.healing) or 0)
+                local t = live or (d and { damage = damage, healing = healing }) or Nemesis.Lookup(name)
+                local seenThisMatch = (live ~= nil) or (d ~= nil)
                 local role, healer, confirmed = ResolveRole(t, classToken)
                 list[#list + 1] = {
                     name        = name,
                     classToken  = classToken,
                     kb          = kb or 0,
                     deaths      = deaths or 0,
-                    damage      = (live and live.damage) or 0,
-                    healing     = (live and live.healing) or 0,
+                    damage      = damage,
+                    healing     = healing,
                     role        = role,
                     healer      = healer,
                     confirmed   = confirmed,
-                    remembered  = (not live) and t ~= nil or nil, -- role came from memory, not this match
+                    remembered  = (not seenThisMatch) and t ~= nil or nil, -- role came from memory, not this match
                     advice      = EngageAdvice(classToken, confirmed),
                     nemesis     = Nemesis.IsNemesis(name), -- known heavy hitter / healer → skull on sight
                 }
