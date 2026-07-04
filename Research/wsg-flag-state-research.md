@@ -1,10 +1,10 @@
 # Tracking WSG Flag State & Carrier Identity per Flavor — Research
 
-**Date:** 2026-06-09
+**Date:** 2026-06-09 (updated 2026-07-04)
 **Author:** Claude (in-game verification: Richard, pending)
-**Status:** Draft (Final once the in-game action items are done)
-**Confidence:** Medium — the event mechanism is proven by Capping's shipped code; the FC-name patterns and aura IDs need in-game capture on Era
-**Flavors verified:** none in-game yet (evidence is Capping's shipped source)
+**Status:** Draft (Final once the two remaining in-game action items are done)
+**Confidence:** Medium-High — event mechanism + enUS patterns + aura IDs + 12s respawn now sourced from two shipped addons (DBM-PvP, Capping) and the Classic spell DB; only the **named-drop** string and the **aura-API flavour** need an in-game yes/no
+**Flavors verified:** none in-game yet (evidence is DBM-PvP + Capping shipped source, Classic wowhead spell DB)
 
 ---
 
@@ -16,6 +16,16 @@
 > in-game action item becomes verifying those strings fire on Era as written.
 > Also confirmed: 12s flag respawn; DBM's FC-vulnerability timers are
 > retail-only, reinforcing F7's doubt about Era debuffs.
+
+> **UPDATE 2026-07-04 (research spike — VERIF-5 prep, web-sourced):** pulled the
+> DBM-PvP `localization.en.lua` + `PvPGeneral.lua` and Capping's WSG module
+> verbatim; confirmed the Classic flag-aura spell IDs on wowhead; and **resolved
+> F7**. Net effect: the ready-to-port **enUS pattern table is now written out
+> below (F8)**, `CHAT_MSG_BG_SYSTEM_{ALLIANCE,HORDE,NEUTRAL}` registration is
+> confirmed on both addons, 12s respawn is double-confirmed (DBM + Capping), and
+> the stacking FC debuffs are confirmed **absent on Classic Era** (patch 2.4.0
+> addition). The in-game work shrinks to **two yes/no checks**: does Era emit a
+> *named* drop message, and is the aura API `UnitAura` or `C_UnitAuras`.
 
 ## Executive Summary
 
@@ -104,12 +114,55 @@ match time-remaining from UI widgets (retail widget via
 `C_UIWidgetManager.GetIconAndTextWidgetVisualizationInfo`, classic via
 `UPDATE_UI_WIDGET`). Relevant to WSG-4's endgame timing, not to WSG-2/3.
 
-### F7 — Open question for [WSG-4]: do flag-carrier stacking debuffs exist on Era?
+### F7 — RESOLVED: flag-carrier stacking debuffs do NOT exist on Classic Era
 
-Focused Assault / Brutal Assault (the stacking FC debuffs, retail spell IDs
-46392/46393) were a later-expansion addition; whether current Classic Era WSG
-applies them at all needs in-game confirmation before WSG-4 is designed.
-Confidence: Low.
+Focused Assault (spell **46392**) / Brutal Assault (**46393**) — the stacking
+FC "vulnerability" debuffs — were **added in patch 2.4.0 (TBC)** and were
+intentionally left out of Classic (Wowpedia; Blizzard forum confirmation). They
+map to DBM-PvP's retail-only `Vulnerable1/2` announce strings ("The flag
+carriers have become vulnerable to attack!"). **Consequence for [WSG-4]:** the
+"Focused Assault stacks countdown" premise is invalid on Era — WSG-4 must pivot
+to the **12s respawn timer** (F6, double-confirmed) + match-time widgets for
+endgame calls. Two caveats: (a) a short **"Recently Dropped Flag"** debuff
+(prevents immediate re-pickup by the dropper) *does* exist in Classic but is not
+the stacking FC debuff and is irrelevant to timers; (b) non-standard realms
+(Season of Discovery / private servers) may have added an FC debuff — verify per
+realm before relying on its absence. Confidence: High (for retail Era).
+
+### F8 — Ready-to-port enUS pattern table (the [VERIF-5]/WSG-2 data)
+
+Verbatim from DBM-PvP `localization.en.lua` (keys named) + Capping, with the
+named-drop inferred symmetric (the sole unverified row). The captured group in a
+"Flag" message is **which flag** (its owning faction); the carrier/scorer is the
+**enemy** of that faction. Aura confirmation: the **Alliance flag** = Silverwing
+Flag **23335**, the **Horde flag** = Warsong Flag **23333** (F4, confirmed on
+Classic wowhead).
+
+```lua
+-- Matched against CHAT_MSG_BG_SYSTEM_ALLIANCE / _HORDE / _NEUTRAL (all three).
+-- flag = "Alliance"|"Horde" (which flag); who = carrier or scorer name.
+local WSG_ENUS = {
+    pickup   = "The (%w+) Flag was picked up by (.+)!",          -- DBM ExprFlagPickUp   (Unused → verify fires)
+    returned = "The (%w+) Flag was returned to its base by (.+)!",-- DBM ExprFlagReturn  (Unused → verify fires)
+    captured = "(.+) captured the (%w+) Flag!",                  -- DBM ExprFlagCaptured (named scorer)
+    -- Named drop is INFERRED symmetric — DBM only ships the generic unnamed form.
+    -- This is the one row to confirm verbatim in-game:
+    dropped  = "The (%w+) Flag was dropped by (.+)!",            -- VERIFY on Era
+    -- Nameless fallbacks (state without identity — always fire, use as backstop):
+    capturedFaction = "The (%w+) ha%w+ captured the flag!",      -- "The Alliance has captured the flag!"
+    droppedGeneric  = "The flag has been dropped!",              -- DBM FlagDropped (Unused)
+    reset           = "The flag has been reset!",                -- DBM FlagReset  (Unused)
+}
+-- flag name → the carrier's confirming aura (locale-independent, F4)
+local FLAG_AURA = { Alliance = 23335 --[[Silverwing]], Horde = 23333 --[[Warsong]] }
+```
+
+State-machine mapping (from your faction's POV): "The **Alliance** Flag was
+picked up by X" ⇒ *your* flag (if Alliance) is now on enemy **X** — the EFC to
+call; confirm with Silverwing (23335) on a unitID. Symmetric for Horde/Warsong.
+Patterns are unanchored `:match` (DBM's proven approach) — the BG system event
+delivers the whole line, so no `^...$` needed, but anchoring is harmless if
+preferred.
 
 ## Analysis & Recommendation
 
@@ -138,26 +191,39 @@ NodeStateProvider:
   contributed (documented degrade, not a bug).
 - Era patch drift on aura APIs (F4) — wrapper + re-verify on `.toc` bumps.
 
-## Action Items — in-game capture (Richard, an Era WSG match)
+## Action Items — remaining in-game checks (Richard, an Era WSG match)
 
-- [ ] Screenshot the **exact** system messages for: flag picked up, flag
-      dropped, flag captured, flag returned (both factions if convenient) —
-      these become the enUS pattern table verbatim
-- [ ] Target (or mouseover) a flag carrier and run:
-      `/dump C_UnitAuras and C_UnitAuras.GetAuraDataByIndex and "C_UnitAuras ok" or "no C_UnitAuras"`
-      and `/run for i=1,40 do local n,_,_,_,_,_,_,_,_,id=UnitAura("target",i); if n then print(i,n,id) end end`
-      — confirms which aura API exists and captures the real flag aura spell IDs
-- [ ] (For WSG-4, low priority) note whether a long-held flag shows a stacking
-      debuff on the carrier
+Only two yes/no items are left; the pattern table (F8) is otherwise sourced.
+Best done via the recorder ([VERIF-5]) rather than by hand — arm it in WSG and
+it logs the verbatim `CHAT_MSG_BG_SYSTEM_*` lines, so no screenshotting.
 
-When done: fill the pattern table + aura IDs, set **Status: Final**, update
+- [ ] **Named-drop confirmation:** does Era emit `"The <faction> Flag was dropped
+      by <name>!"` (the F8 `dropped` row), or only the generic `"The flag has
+      been dropped!"`? If only generic, the FC state machine sets the flag to
+      `dropped` with `carrier = last known` (name persists from the pickup event).
+- [ ] **Aura API flavour:** on a targeted/mouseover FC, confirm `C_UnitAuras`
+      vs `UnitAura` on current Era:
+      `/dump C_UnitAuras and C_UnitAuras.GetAuraDataByIndex and "C_UnitAuras" or "UnitAura"`
+      then verify the F8 IDs appear: `/run for i=1,40 do local n,_,_,_,_,_,_,_,_,id=UnitAura("target",i); if n and (id==23333 or id==23335) then print(n,id) end end`
+
+Already resolved (no in-game needed): enUS patterns (F8), 12s respawn (F6),
+event registration (F1), aura IDs (F4), Era debuff absence (F7).
+
+When done: mark the F8 `dropped` row confirmed, set **Status: Final**, update
 **Flavors verified**, bump the `CLAUDE.md` row.
 
 ## Sources
 
+- https://github.com/DeadlyBossMods/DBM-PvP — `DBM-PvP/localization.en.lua`
+  (verbatim `ExprFlagPickUp/Return/Captured`, `FlagCaptured`, `FlagDropped`/`Taken`/
+  `Reset` marked Unused, `Vulnerable1/2`) + `PvPGeneral.lua` (registers
+  `CHAT_MSG_BG_SYSTEM_ALLIANCE/HORDE/NEUTRAL`, `NewTimer(12,"TimerFlag")`) — the F8 table
 - https://github.com/BigWigsMods/Capping — `Modules/WarsongGulchTwinPeaks.lua`
-  (chat-trigger detection, 12s respawn, widget time-remaining, retail/classic
-  conditionals; notably: no carrier tracking)
+  (chat-trigger detection, 12s respawn double-confirm, widget time-remaining,
+  retail/classic conditionals; notably: no carrier tracking)
+- https://www.wowhead.com/classic/spell=23333/warsong-flag — Warsong Flag (Horde's flag) aura, confirmed Classic (F4)
+- https://www.wowhead.com/classic/spell=23335/silverwing-flag — Silverwing Flag (Alliance's flag) aura, confirmed Classic (F4)
+- https://wowpedia.fandom.com/wiki/Focused_Assault + https://www.wowhead.com/spell=46392/focused-assault — FC vulnerability debuff added patch 2.4.0, excluded from Classic (F7)
 - https://warcraft.wiki.gg/wiki/API_GetBattlefieldFlagPosition — flag position API (F5)
 - `Research/bg-detection-reference.md` — `GetActiveBg()` gating (this repo)
 - `Research/ab-node-state-research.md` — the provider pattern this mirrors (this repo)
