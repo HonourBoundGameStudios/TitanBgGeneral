@@ -13,7 +13,9 @@ Basin**: fast callouts today, situational awareness and smart direction next.
 > the whole AB/WSG/AV callout+advisor stack, the threat/intel/nemesis engine, the
 > recorder, and the CMD/REL command tools). The 2026-07-04 batch shipped
 > **committed but in-game-GREEN-pending**; its verification checklist is
-> `Process/bg-trip-2026-07-04.md`. A failed verification returns as a new `[BUG]`.
+> `Process/bg-trip-2026-07-04.md`, and the later same-day additions (VERIF-5 aura,
+> VERIF-6, TEAM-1/2) are in `Process/bg-trip-2026-07-04b.md`. A failed
+> verification returns as a new `[BUG]`.
 
 ---
 
