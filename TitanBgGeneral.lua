@@ -1012,6 +1012,201 @@ local function AbCalloutSuffix(abbr)
     return " - neutral"
 end
 
+-- ******************************** WSG FlagState (WSG-2/3/4) *******************************
+-- Tracks both flag carriers + flag status from BG system chat, the way Capping
+-- does it: CHAT_MSG_BG_SYSTEM_{ALLIANCE,HORDE,NEUTRAL} matched against enUS
+-- trigger patterns (Research/wsg-flag-state-research.md, F1-F8). Carrier NAMES
+-- come only from the pickup message — no clean API — so a missed event leaves a
+-- stale name until the next transition or an aura confirm. A locale-independent
+-- aura check (Silverwing 23335 / Warsong 23333) confirms a carrier when we hold a
+-- unitID. enUS patterns first; other locales degrade to flag-state-without-names,
+-- never error. Provider runs from BG entry so no transition is missed.
+local FlagState = {}
+do
+    -- flags[F] = the flag OWNED BY faction F (Alliance flag = Silverwing, Horde
+    -- flag = Warsong). Its carrier is an enemy OF F (the player running it).
+    -- state: "base" | "carried" | "dropped".
+    local flags = {
+        Alliance = { state = "base", carrier = nil, since = 0 },
+        Horde    = { state = "base", carrier = nil, since = 0 },
+    }
+    local score     = { Alliance = 0, Horde = 0 }
+    local respawnAt  = nil  -- GetTime() a captured flag returns to base (12s, F6)
+    local frame, registered
+
+    -- enUS patterns (F8). %w+ = the flag's faction; (.+) = a player name.
+    -- Unanchored :match (DBM's proven approach — the event delivers the whole line).
+    local P = {
+        pickup   = "The (%w+) [Ff]lag was picked up by (.+)!",
+        returned = "The (%w+) [Ff]lag was returned to its base by (.+)!",
+        dropped  = "The (%w+) [Ff]lag was dropped by (.+)!",
+        captured = "(.+) captured the (%w+) [Ff]lag!",
+        capFaction  = "The (%w+) ha%w+ captured the flag!",
+        dropGeneric = "The flag has been dropped!",
+        reset       = "The flag has been reset!",
+    }
+
+    local FLAG_AURA = { Alliance = 23335, Horde = 23333 } -- Silverwing / Warsong (F4)
+
+    local function setFlag(faction, state, carrier)
+        local f = flags[faction]
+        if not f then return end
+        f.state, f.carrier, f.since = state, carrier, GetTime()
+    end
+
+    -- faction = the FLAG that was captured; the scorer is that flag's enemy.
+    local function onCapture(faction)
+        local scorer = (faction == "Alliance") and "Horde" or "Alliance"
+        score[scorer] = (score[scorer] or 0) + 1
+        setFlag(faction, "base", nil)
+        respawnAt = GetTime() + 12 -- F6: fixed 12s respawn after a capture
+    end
+
+    local function HandleMessage(msg)
+        if not msg then return end
+        local flag, who = msg:match(P.pickup)
+        if flag then setFlag(flag, "carried", who); return end
+        flag, who = msg:match(P.returned)
+        if flag then setFlag(flag, "base", nil); return end
+        flag, who = msg:match(P.dropped)
+        if flag then setFlag(flag, "dropped", who); return end
+        who, flag = msg:match(P.captured)
+        if flag then onCapture(flag); return end
+        flag = msg:match(P.capFaction)
+        if flag then
+            -- "The Alliance has captured the flag!" — Alliance scored, so the Horde flag was capped.
+            onCapture(flag == "Alliance" and "Horde" or "Alliance"); return
+        end
+        if msg:match(P.dropGeneric) then
+            -- Nameless drop (F8 action item): mark whichever flag is carried as
+            -- dropped, keeping its last-known carrier so the name persists.
+            for fac, f in pairs(flags) do
+                if f.state == "carried" then setFlag(fac, "dropped", f.carrier) end
+            end
+            return
+        end
+        if msg:match(P.reset) then
+            setFlag("Alliance", "base", nil); setFlag("Horde", "base", nil)
+        end
+    end
+
+    -- Best-effort: a unit token currently resolving to `name`, so we can read
+    -- health / confirm the flag aura. Names are Name or Name-Realm; match either.
+    local function UnitForName(name)
+        if not name then return nil end
+        local short = name:match("^[^-]+") or name
+        local function m(unit)
+            local n = UnitExists(unit) and UnitName(unit)
+            return (n and (n == name or n == short)) and unit or nil
+        end
+        local u = m("target") or m("mouseover") or m("focus")
+        if u then return u end
+        if C_NamePlate and C_NamePlate.GetNamePlates then
+            for _, np in ipairs(C_NamePlate.GetNamePlates()) do
+                local unit = np.namePlateUnitToken
+                if unit and m(unit) then return unit end
+            end
+        end
+        return nil
+    end
+
+    -- Aura scan for the flag aura on a unit (F4). Wrapped so the API flavour
+    -- (C_UnitAuras vs UnitAura) is resolved in one place. Returns true/false.
+    local function HasFlagAura(unit, spellId)
+        if not (unit and UnitExists(unit)) then return false end
+        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+            for i = 1, 40 do
+                local a = C_UnitAuras.GetAuraDataByIndex(unit, i, "HELPFUL")
+                if not a then break end
+                if a.spellId == spellId then return true end
+            end
+        elseif UnitAura then
+            for i = 1, 40 do
+                local n = { UnitAura(unit, i, "HELPFUL") }
+                if not n[1] then break end
+                if n[10] == spellId then return true end
+            end
+        end
+        return false
+    end
+
+    -- Locale-independent carrier recovery (F4): when chat gave us no name (missed
+    -- pickup, joined late), a visible unit bearing the flag's aura IS the carrier.
+    -- Scans target/mouseover/focus + nameplates for FLAG_AURA[flagFaction].
+    local function FindCarrierByAura(flagFaction)
+        local spell = FLAG_AURA[flagFaction]
+        if not spell then return nil end
+        for _, u in ipairs({ "target", "mouseover", "focus" }) do
+            if HasFlagAura(u, spell) then return UnitName(u) end
+        end
+        if C_NamePlate and C_NamePlate.GetNamePlates then
+            for _, np in ipairs(C_NamePlate.GetNamePlates()) do
+                local unit = np.namePlateUnitToken
+                if unit and HasFlagAura(unit, spell) then return UnitName(unit) end
+            end
+        end
+        return nil
+    end
+
+    -- health % (0-100) for a carrier name if we can currently see them, else nil.
+    function FlagState.HealthPct(name)
+        local u = UnitForName(name)
+        if not u then return nil end
+        local mx = UnitHealthMax(u)
+        if not mx or mx == 0 then return nil end
+        return math.floor(UnitHealth(u) / mx * 100 + 0.5)
+    end
+
+    -- Player-POV snapshot for the WSG UI + callouts:
+    --   efc = the enemy carrying OUR flag (Enemy Flag Carrier — kill target)
+    --   ffc = our ally carrying THEIR flag (Friendly Flag Carrier — escort)
+    -- Each: { name, state, health }. Plus score + a live respawn countdown.
+    function FlagState.GetView()
+        local myFac    = UnitFactionGroup("player")               -- "Alliance"/"Horde"
+        local ourFlag  = myFac                                    -- our flag object
+        local theirFlag = (myFac == "Alliance") and "Horde" or "Alliance"
+        local our, their = flags[ourFlag] or {}, flags[theirFlag] or {}
+        local respawn = respawnAt and math.max(0, math.ceil(respawnAt - GetTime())) or nil
+        if respawn == 0 then respawn = nil end
+        -- Aura fallback for a name chat never gave us (only while the flag is out).
+        local efcName = our.carrier
+        if not efcName and our.state ~= "base" then efcName = FindCarrierByAura(ourFlag) end
+        local ffcName = their.carrier
+        if not ffcName and their.state ~= "base" then ffcName = FindCarrierByAura(theirFlag) end
+        return {
+            efc     = { name = efcName,   state = our.state or "base",
+                        health = efcName and FlagState.HealthPct(efcName) or nil },
+            ffc     = { name = ffcName, state = their.state or "base",
+                        health = ffcName and FlagState.HealthPct(ffcName) or nil },
+            score   = { ally = score.Alliance, horde = score.Horde },
+            respawn = respawn,
+        }
+    end
+
+    function FlagState.Start()
+        if GetActiveBg() ~= "WSG" then return end
+        if not frame then frame = CreateFrame("Frame"); frame:SetScript("OnEvent", function(_, _, msg) HandleMessage(msg) end) end
+        if not registered then
+            frame:RegisterEvent("CHAT_MSG_BG_SYSTEM_ALLIANCE")
+            frame:RegisterEvent("CHAT_MSG_BG_SYSTEM_HORDE")
+            frame:RegisterEvent("CHAT_MSG_BG_SYSTEM_NEUTRAL")
+            registered = true
+        end
+        -- Fresh state each match (Start is idempotent per BG entry via the caller).
+        setFlag("Alliance", "base", nil); setFlag("Horde", "base", nil)
+        score.Alliance, score.Horde, respawnAt = 0, 0, nil
+    end
+
+    function FlagState.Stop()
+        if frame and registered then
+            frame:UnregisterEvent("CHAT_MSG_BG_SYSTEM_ALLIANCE")
+            frame:UnregisterEvent("CHAT_MSG_BG_SYSTEM_HORDE")
+            frame:UnregisterEvent("CHAT_MSG_BG_SYSTEM_NEUTRAL")
+            registered = false
+        end
+    end
+end
+
 -- ******************************** Build AB Grid *******************************
 local function BuildAbGrid(parent, size, hGap, vGap)
     local cols, rows = 5, 6
@@ -1875,6 +2070,40 @@ function ShowBgGeneralScreen()
         end
     end
 
+    -- WSG-2 FC status line: both flag carriers by name + health, in the same band
+    -- as the AB strip. Shown only on the WSG tab; live from FlagState.GetView().
+    -- EFC = the enemy carrying OUR flag (kill target, red); FFC = our ally carrying
+    -- THEIR flag (escort, green). (WSG-4 later appends respawn + score here.)
+    local wsgStrip = CreateFrame("Frame", nil, frame)
+    wsgStrip:SetAllPoints(frame)
+    local wsgStripFS = wsgStrip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    wsgStripFS:SetPoint("TOP", frame, "TOP", 0, stripY)
+    wsgStripFS:SetJustifyH("CENTER")
+    wsgStripFS:SetWordWrap(false)
+    wsgStrip:Hide()
+
+    -- One carrier's segment: "EFC Name 45%", "EFC Name (dropped)", or a muted
+    -- "our flag safe" when the flag is at base.
+    local function fcSegment(label, fc, col, safeText)
+        if fc.name and (fc.state == "carried" or fc.state == "dropped") then
+            local short = fc.name:match("^[^-]+") or fc.name
+            if fc.state == "dropped" then
+                return col .. label .. " " .. short .. " |cffffd100(dropped)|r"
+            end
+            local hp = fc.health and (" " .. fc.health .. "%") or ""
+            return col .. label .. " " .. short .. hp .. "|r"
+        end
+        return MUTE_COLOR .. safeText .. "|r"
+    end
+
+    local function RefreshWsgStrip()
+        if not wsgStrip:IsShown() then return end
+        local v = FlagState.GetView()
+        local efc = fcSegment("EFC", v.efc, HORDE_COLOR, "our flag safe")
+        local ffc = fcSegment("FFC", v.ffc, ALLY_COLOR, "their flag safe")
+        wsgStripFS:SetText(efc .. "    " .. ffc)
+    end
+
     -- Grid containers (each sized to its own grid, centered in the window)
     local abContainer = CreateFrame("Frame", nil, frame)
     abContainer:SetSize(gridWidth(abCols), gridH)
@@ -1899,6 +2128,7 @@ function ShowBgGeneralScreen()
         avContainer:Hide()
         container:Show()
         if container == abContainer then abStrip:Show(); RefreshAbStrip() else abStrip:Hide() end
+        if container == wsgContainer then wsgStrip:Show(); RefreshWsgStrip() else wsgStrip:Hide() end
     end
 
     tabAB:SetScript("OnClick", function() selectTab(abContainer) end)
@@ -1935,12 +2165,14 @@ function ShowBgGeneralScreen()
             IntelPanel.Refresh()
             DevPanel.Refresh()
             RefreshAbStrip()
+            RefreshWsgStrip()
             RefreshAdvice()
         end
     end)
     IntelPanel.Refresh()
     DevPanel.Refresh()
     RefreshAbStrip()
+    RefreshWsgStrip()
     RefreshAdvice()
 
     TitanBgGeneralSaved.shown = true
@@ -2003,6 +2235,8 @@ autoOpenFrame:SetScript("OnEvent", function()
     -- the auto-open option (same gate the Node/Flag providers will use)
     if GetActiveBg() then
         ThreatProvider.Start()
+        -- WSG-2/3/4: flag-state provider runs only in WSG (self-gated in Start).
+        if GetActiveBg() == "WSG" then FlagState.Start() else FlagState.Stop() end
         -- INTEL-3: auto pre-match briefing from memory. Delayed so the enemy
         -- roster has populated on the scoreboard before we read it; prints LOCALLY
         -- to the leader (broadcasting to team is the explicit `/bgthreat brief`).
@@ -2020,6 +2254,7 @@ autoOpenFrame:SetScript("OnEvent", function()
         end
     else
         ThreatProvider.Stop()
+        FlagState.Stop()
         preBriefed = false
     end
 
