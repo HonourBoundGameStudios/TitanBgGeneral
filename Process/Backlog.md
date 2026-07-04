@@ -50,6 +50,4 @@ pending in-game GREEN). These close out the epic.
 
 ## Parked / Ideas
 
-- Eye of the Storm / Twin Peaks / Deepwind Gorge support (retail)
-- Voice (TTS) callout playback for the leader
-- **10v10 team-strategy advisor** (to discuss 2026-07-03) — read the whole enemy *and* friendly comp (both 10-player rosters), evaluate the team-level matchup, and suggest the best strat for it (opener split, who to focus, defend/offense balance). Team-composition scale, above the per-enemy `MATCHUP` 1v1 advice we already ship. Design conversation pending with the Admiral.
+- **10v10 team-strategy advisor** (to discuss 2026-07-03) — read the whole enemy *and* friendly comp (both rosters), evaluate the team-level matchup, and suggest the best strat for it (opener split, who to focus, defend/offense balance). Team-composition scale, above the per-enemy `MATCHUP` 1v1 advice we already ship. **Research done** (see `Research/team-comp-strategy-research.md`, 2026-07-04): both rosters are already read by shipped code (`GroupMembers` ours / `CaptureRoster` theirs) and never diffed; the whole feature is a `CompSignature` reducer + a per-BG rule table (`COMP_PLAN`/`FC_PLAN`/`ENEMY_ARCHETYPE`), healer-differential ΔH as the master posture switch. One in-game gate (`UnitGroupRolesAssigned` on Era) + note **AB is 15v15** not 10v10. Design conversation still pending with the Admiral.
