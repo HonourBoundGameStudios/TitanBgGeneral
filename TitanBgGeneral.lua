@@ -2492,6 +2492,11 @@ do
         return "|cffffffff"
     end
 
+    -- TEAM-2: semantic posture colours (green = go, gold = neutral, orange =
+    -- caution — deliberately NOT the enemy-red, which reads as "kill target").
+    local POSTURE_COLOR = { PRESS = "|cff40ff40", STANDARD = "|cffffd100", TURTLE = "|cffff8040" }
+    local function PostureColor(p) return POSTURE_COLOR[p] or "|cffffffff" end
+
     -- Current group as { name=, class= }. Solo shows just the player.
     -- GroupMembers() is lifted to file scope (shared with the TEAM-1 comp engine).
 
@@ -2511,6 +2516,22 @@ do
         end
         local parts = {}
         for _, label in ipairs(order) do parts[#parts + 1] = label .. ": " .. table.concat(groups[label], ", ") end
+        SendChatMessage("Plan >> " .. table.concat(parts, " // "), GetChatType())
+    end
+
+    -- TEAM-2: broadcast the comp-strategy plan to BG chat (opt-in button, never
+    -- automatic). Plain ASCII, " // " separators — a bare "|" is an invalid chat
+    -- escape (SendChatMessage rejects it) and colour codes don't render for others.
+    function PlanBoard.BroadcastPlan()
+        local plan, reason = BuildTeamPlan()
+        if not plan then
+            print("|cffeda55fBG General|r " .. (reason or "no plan to broadcast"))
+            return
+        end
+        local parts = { plan.posture .. ": " .. plan.line }
+        if plan.fc then parts[#parts + 1] = "FC " .. TitleClass(plan.fc.class) .. " (" .. plan.fc.escort .. ")" end
+        if plan.split then parts[#parts + 1] = ("O%d D%d"):format(plan.split.off, plan.split.def) end
+        if #plan.focus > 0 then parts[#parts + 1] = "Focus " .. table.concat(plan.focus, ", ") end
         SendChatMessage("Plan >> " .. table.concat(parts, " // "), GetChatType())
     end
 
@@ -2599,6 +2620,52 @@ do
         title:SetText(("|cffeda55fBattle Plan|r  ·  %s"):format(GetActiveBg() or "no BG"))
 
         local y = -pad - 16 - 6
+
+        -- TEAM-2: Suggested Plan — the TEAM-1 comp advice as the board headline
+        -- (summary before detail). Recomputed every Build()/Refresh (the board's
+        -- rebuild-on-refresh pattern; that is the "live-refine"). WSG/AB only —
+        -- other states show why it is quiet.
+        local plan, planReason = BuildTeamPlan()
+        local spHdr = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        spHdr:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, y)
+        spHdr:SetText("|cffeda55fSuggested Plan|r")
+        y = y - 15
+        local function planLine(text, fontObj)
+            local fs = frame:CreateFontString(nil, "OVERLAY", fontObj or "GameFontHighlightSmall")
+            fs:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, y)
+            fs:SetWidth(W - pad * 2); fs:SetJustifyH("LEFT"); fs:SetWordWrap(true)
+            fs:SetText(text)
+            y = y - (math.max(math.ceil(fs:GetStringHeight() or 0), 12) + 3)
+        end
+        if not plan then
+            planLine("|cff808080" .. (planReason or "no plan yet") .. "|r")
+        else
+            local confirmNote = (plan.theirConfirmed < plan.theirHealers)
+                and (", " .. plan.theirConfirmed .. " confirmed") or ""
+            planLine(("%s%s|r  |cffffffff%s|r  |cff808080(heal %d v %d, %+d%s)|r"):format(
+                PostureColor(plan.posture), plan.posture, plan.line,
+                plan.ourHealers, plan.theirHealers, plan.dH, confirmNote))
+            if plan.fc then
+                planLine(("|cff808080FC:|r %s%s|r |cff808080— %s|r"):format(
+                    ClassColor(plan.fc.class), TitleClass(plan.fc.class), plan.fc.escort))
+            end
+            if plan.split then
+                planLine(("|cff808080Split:|r O %d |cff808080/|r D %d"):format(plan.split.off, plan.split.def))
+            end
+            if #plan.focus > 0 then
+                planLine("|cff808080Focus:|r " .. table.concat(plan.focus, ", "))
+            end
+            planLine("|cff707070estimated from class — sharpens as the fight develops|r", "GameFontDisableSmall")
+        end
+        -- Broadcast Plan (distinct from the assignment Broadcast in the action row).
+        local bpBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+        bpBtn:SetSize(W - pad * 2, rowH - 2)
+        bpBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, y)
+        bpBtn:SetText("Broadcast Plan")
+        bpBtn:SetScript("OnClick", function() PlanBoard.BroadcastPlan() end)
+        if not plan then bpBtn:Disable() end
+        y = y - rowH - 8
+
         for i = 1, shown do
             local m = members[i]
             local nameFS = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
