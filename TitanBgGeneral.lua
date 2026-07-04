@@ -1996,10 +1996,33 @@ do
     }
     local function roleList() return PLAN_ROLES[GetActiveBg() or ""] or PLAN_ROLES.default end
 
+    -- CMD-2: one-click opening-split presets, editable + persisted. Defaults seed
+    -- TitanBgGeneralSaved.openers[bg] the first time a BG is opened; edits stick.
+    local OPENER_DEFAULTS = {
+        AB      = { "5 Stables, 5 Blacksmith, rest Farm", "Zerg Blacksmith - everyone mid", "5 cap Stables, 10 to Gold Mine" },
+        WSG     = { "8 mid 2 D", "3 defense, 7 offense", "Turtle - all D, farm their GY" },
+        AV      = { "All south - cap Galv then push", "5 D at chokes, rest offense", "Rush Drek - ignore towers" },
+        default = { "Group up - follow me", "Split into 2 groups", "Defense priority" },
+    }
+
     local function store()
         local s = TitanBgGeneralSaved.plan
         if type(s) ~= "table" then s = {}; TitanBgGeneralSaved.plan = s end
         return s
+    end
+
+    -- Opener presets for the current BG, seeded from defaults on first use.
+    local function openersStore()
+        local s = TitanBgGeneralSaved.openers
+        if type(s) ~= "table" then s = {}; TitanBgGeneralSaved.openers = s end
+        local bg = GetActiveBg() or "default"
+        if type(s[bg]) ~= "table" then
+            local defs = OPENER_DEFAULTS[bg] or OPENER_DEFAULTS.default
+            local copy = {}
+            for i, v in ipairs(defs) do copy[i] = v end
+            s[bg] = copy
+        end
+        return s[bg]
     end
 
     -- Next role in the cycle: nil -> first, last -> nil (back to unassigned).
@@ -2132,6 +2155,33 @@ do
             y = y - 14
         end
 
+        -- CMD-2: opening-split presets. Left-click broadcasts; right-click edits.
+        y = y - 8
+        local openHdr = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        openHdr:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, y)
+        openHdr:SetText("|cffeda55fOpeners|r  |cff808080(left-click send · right-click edit)|r")
+        y = y - 16
+        local bgKey = GetActiveBg() or "default"
+        for i in ipairs(openersStore()) do
+            local ob = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+            ob:SetSize(W - pad * 2, rowH - 2)
+            ob:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, y)
+            ob:SetText(openersStore()[i])
+            ob:GetFontString():ClearAllPoints()
+            ob:GetFontString():SetPoint("LEFT", ob, "LEFT", 6, 0)
+            ob:GetFontString():SetPoint("RIGHT", ob, "RIGHT", -6, 0)
+            ob:GetFontString():SetJustifyH("LEFT")
+            ob:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+            ob:SetScript("OnClick", function(_, mouseButton)
+                if mouseButton == "RightButton" then
+                    StaticPopup_Show("TITANBGGENERAL_EDIT_OPENER", nil, nil, { bg = bgKey, idx = i })
+                else
+                    SendChatMessage(openersStore()[i], GetChatType())
+                end
+            end)
+            y = y - rowH
+        end
+
         y = y - 6
         -- Action row: Broadcast / Clear / Refresh / Close.
         local btns = {
@@ -2154,6 +2204,30 @@ do
         frame:SetHeight(-y)
         frame:Show()
     end
+
+    -- CMD-2: native text-input editor for an opener preset (right-click a preset).
+    -- Writes straight to the BG-keyed store via the passed { bg, idx }, then rebuilds.
+    StaticPopupDialogs["TITANBGGENERAL_EDIT_OPENER"] = {
+        text = "Edit opening call:",
+        button1 = SAVE or "Save",
+        button2 = CANCEL or "Cancel",
+        hasEditBox = true,
+        maxLetters = 240,
+        OnShow = function(self, data)
+            local list = data and TitanBgGeneralSaved.openers and TitanBgGeneralSaved.openers[data.bg]
+            self.editBox:SetText((list and list[data.idx]) or "")
+            self.editBox:HighlightText()
+        end,
+        OnAccept = function(self, data)
+            local text = self.editBox:GetText()
+            local list = data and TitanBgGeneralSaved.openers and TitanBgGeneralSaved.openers[data.bg]
+            if list and text and text:gsub("%s", "") ~= "" then list[data.idx] = text end
+            Build()
+        end,
+        EditBoxOnEnterPressed = function(self) self:GetParent().button1:Click() end,
+        EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+        timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+    }
 
     function PlanBoard.Toggle()
         if frame and frame:IsShown() then PlanBoard.Hide() else Build() end
