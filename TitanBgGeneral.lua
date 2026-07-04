@@ -354,6 +354,13 @@ SlashCmdList["TITANBGGENERALTHREAT"] = function(msg)
         if IntelPanel and IntelPanel.AnnounceThreats then IntelPanel.AnnounceThreats() end
         return
     end
+    -- INTEL-3: `/bgthreat brief` broadcasts the memory-only pre-match briefing to
+    -- team chat (the leader's explicit, outward-facing action — auto entry only
+    -- prints it locally).
+    if msg and msg:lower():match("brief") then
+        if IntelPanel and IntelPanel.ShowBriefing then IntelPanel.ShowBriefing(true) end
+        return
+    end
     print("|cffeda55fBG General|r " .. ThreatProvider.GetAdvisoryLine())
 end
 
@@ -1709,6 +1716,47 @@ do
         SendChatMessage("Enemy threats >> " .. table.concat(parts, " // "), GetChatType())
     end
 
+    -- INTEL-3: pre-match briefing built purely from the remembered dossier — no
+    -- live combat data (the match hasn't started). Lists only the ACTIONABLE known
+    -- enemies: healers to CC and standing nemeses to focus. Returns a chat-safe
+    -- line, or nil when nobody on the enemy team has been met before.
+    function IntelPanel.BuildBriefing()
+        local cc, focus = {}, {}
+        for _, e in ipairs(GetEnemyIntel()) do
+            if e.remembered then -- role came from memory → we've fought them before
+                local short = e.name:match("^[^-]+") or e.name
+                if e.healer and #cc < 4 then
+                    cc[#cc + 1] = short .. " (" .. ClassLabel(e.classToken) .. ")"
+                elseif e.nemesis and #focus < 4 then
+                    focus[#focus + 1] = "{skull}" .. short .. " (" .. ClassLabel(e.classToken) .. ")"
+                end
+            end
+        end
+        local parts = {}
+        if #cc > 0    then parts[#parts + 1] = "CC: " .. table.concat(cc, ", ") end
+        if #focus > 0 then parts[#parts + 1] = "Focus: " .. table.concat(focus, ", ") end
+        if #parts == 0 then return nil end
+        -- " // " separator, never a bare "|" (chat escape-code safe, per the CMD-6 bug).
+        return "Pre-match intel >> " .. table.concat(parts, " // ")
+    end
+
+    -- Show the briefing. broadcast==true sends to team chat (GetChatType); else it
+    -- prints locally to the leader. The auto pre-match path (broadcast=false) stays
+    -- silent when nobody known is present; only the explicit command reports empty,
+    -- and it reports to the user locally — never an empty message to the team.
+    function IntelPanel.ShowBriefing(broadcast)
+        local line = IntelPanel.BuildBriefing()
+        if not line then
+            if broadcast then print("|cffeda55fBG General|r Pre-match intel: no known enemies on the board.") end
+            return
+        end
+        if broadcast then
+            SendChatMessage(line, GetChatType())
+        else
+            print("|cffeda55fBG General|r " .. line)
+        end
+    end
+
     -- Width needed for the table = pad + last column's right edge + pad.
     function IntelPanel.Width(pad)
         return pad * 2 + ColX(#COLS) + COLS[#COLS].w
@@ -2014,6 +2062,7 @@ end
 -- off, the window is left entirely alone.
 local autoOpenFrame = CreateFrame("Frame")
 autoOpenFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+local preBriefed = false -- INTEL-3: guard so the pre-match briefing fires once per BG entry
 autoOpenFrame:SetScript("OnEvent", function()
     -- Refresh the Titan bar text (BG abbreviation) on every zone transition,
     -- independent of the auto-open option
@@ -2025,8 +2074,20 @@ autoOpenFrame:SetScript("OnEvent", function()
     -- the auto-open option (same gate the Node/Flag providers will use)
     if GetActiveBg() then
         ThreatProvider.Start()
+        -- INTEL-3: auto pre-match briefing from memory. Delayed so the enemy
+        -- roster has populated on the scoreboard before we read it; prints LOCALLY
+        -- to the leader (broadcasting to team is the explicit `/bgthreat brief`).
+        if not preBriefed then
+            preBriefed = true
+            C_Timer.After(5, function()
+                if GetActiveBg() and IntelPanel and IntelPanel.ShowBriefing then
+                    IntelPanel.ShowBriefing(false)
+                end
+            end)
+        end
     else
         ThreatProvider.Stop()
+        preBriefed = false
     end
 
     -- Recorder lifecycle (VERIF-2/3): arm on ANY pvp instance — including map IDs
