@@ -125,7 +125,7 @@ gates open. Vision captured 2026-07-03 from a WSG post-match review.
 
 ## Epic 5 — Release Quality
 
-- [ ] **[REL-1] Options panel** — Titan right-click → settings (auto-open, channel override, sounds)
+- [x] **[REL-1] Options panel** (2026-07-04; **in-game GREEN PENDING**) — the Titan right-click menu now carries the settings: existing **Auto-open**, a new **Sound alerts** toggle (opt-in, `TitanBgGeneralSaved.sounds`, wired by REL-2), and a **Callout channel** radio group (Auto / Instance-BG / Raid / Party / Say → `TitanBgGeneralSaved.channelOverride`). `GetChatType()` honours the override **only when that channel is usable right now** (e.g. RAID only in a raid), else falls back to the smart default so a callout is never dropped into a channel you're not in. **Verify next session:** set channel = Say, fire a callout (goes to /say); set Raid while solo → still auto-routes; toggle Sound alerts.
 - [ ] **[REL-2] Sound cues** — optional audio on critical advisor alerts
 - [ ] **[REL-3] Multi-flavor verification pass** — full smoke checklist on retail and Cata Classic, flavor guards where APIs diverge
 - [ ] **[REL-4] CurseForge release** — changelog, `.toc` version bump, packaging via `.pkgmeta`

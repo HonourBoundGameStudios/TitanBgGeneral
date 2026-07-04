@@ -33,6 +33,26 @@ local function IsAutoOpenEnabled()
     return TitanBgGeneralSaved.autoOpen ~= false
 end
 
+-- REL-1: callout channel preference. "AUTO" = the smart priority in GetChatType;
+-- otherwise a preferred channel that GetChatType uses only when it's actually
+-- usable (e.g. RAID only in a raid), falling back to AUTO so a bad setting can't
+-- silently swallow a callout.
+local CHANNEL_CHOICES = {
+    { key = "AUTO",          label = "Auto (smart)" },
+    { key = "INSTANCE_CHAT", label = "Instance / BG" },
+    { key = "RAID",          label = "Raid" },
+    { key = "PARTY",         label = "Party" },
+    { key = "SAY",           label = "Say" },
+}
+local function GetChannelOverride()
+    return TitanBgGeneralSaved.channelOverride or "AUTO"
+end
+
+-- REL-2: optional audio alerts on critical advisor events. Opt-in (default off).
+local function AreSoundsEnabled()
+    return TitanBgGeneralSaved.sounds == true
+end
+
 local nodeIcons = {
     ["Stables"] = "Interface\\Icons\\Ability_Mount_RidingHorse",
     ["Gold Mine"] = "Interface\\Icons\\trade_mining",
@@ -124,6 +144,29 @@ local function PrepareBgGeneralMenu()
     end
     UIDropDownMenu_AddButton(info, level)
 
+    -- REL-2: sound alerts toggle
+    local snd = UIDropDownMenu_CreateInfo()
+    snd.text = "Sound alerts"
+    snd.isNotRadio = true
+    snd.checked = AreSoundsEnabled()
+    snd.func = function() TitanBgGeneralSaved.sounds = not AreSoundsEnabled() end
+    UIDropDownMenu_AddButton(snd, level)
+
+    -- REL-1: callout channel override (radio group)
+    TitanPanelRightClickMenu_AddSpacer()
+    local chTitle = UIDropDownMenu_CreateInfo()
+    chTitle.text = "Callout channel"
+    chTitle.isTitle = true
+    chTitle.notCheckable = true
+    UIDropDownMenu_AddButton(chTitle, level)
+    for _, ch in ipairs(CHANNEL_CHOICES) do
+        local c = UIDropDownMenu_CreateInfo()
+        c.text = ch.label
+        c.checked = (GetChannelOverride() == ch.key)
+        c.func = function() TitanBgGeneralSaved.channelOverride = ch.key end
+        UIDropDownMenu_AddButton(c, level)
+    end
+
     TitanPanelRightClickMenu_AddSpacer()
     TitanPanelRightClickMenu_AddHide(ADDON_ID, level)
 end
@@ -173,7 +216,17 @@ end
 
 local function GetChatType()
     local inInstance, instanceType = IsInInstance()
-    if inInstance and instanceType == "pvp" then
+    local inPvp = inInstance and instanceType == "pvp"
+    -- REL-1: honour the channel override, but only when the channel is actually
+    -- usable right now; otherwise fall through to the smart default so a callout
+    -- is never silently dropped into a channel the player isn't in.
+    local override = GetChannelOverride()
+    if override == "INSTANCE_CHAT" and inPvp then return "INSTANCE_CHAT" end
+    if override == "RAID" and IsInRaid() then return "RAID" end
+    if override == "PARTY" and IsInGroup() then return "PARTY" end
+    if override == "SAY" then return "SAY" end
+
+    if inPvp then
         return "INSTANCE_CHAT"
     elseif IsInRaid() then
         return "RAID"
