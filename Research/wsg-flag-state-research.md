@@ -3,7 +3,7 @@
 **Date:** 2026-06-09 (updated 2026-07-04)
 **Author:** Claude (in-game verification: Richard, pending)
 **Status:** Draft (Final once the two remaining in-game action items are done)
-**Confidence:** Medium-High — event mechanism + enUS patterns + aura IDs + 12s respawn now sourced from two shipped addons (DBM-PvP, Capping) and the Classic spell DB; only the **named-drop** string and the **aura-API flavour** need an in-game yes/no
+**Confidence:** High — event mechanism + enUS patterns + aura IDs + 12s respawn sourced from two shipped addons (DBM-PvP, Capping) and the Classic spell DB, and the **named-drop string is now confirmed in-game (2026-07-04, VERIF-5)**; only the **aura-API flavour** still needs an in-game yes/no
 **Flavors verified:** none in-game yet (evidence is DBM-PvP + Capping shipped source, Classic wowhead spell DB)
 
 ---
@@ -142,17 +142,23 @@ Classic wowhead).
 -- Matched against CHAT_MSG_BG_SYSTEM_ALLIANCE / _HORDE / _NEUTRAL (all three).
 -- flag = "Alliance"|"Horde" (which flag); who = carrier or scorer name.
 local WSG_ENUS = {
-    pickup   = "The (%w+) Flag was picked up by (.+)!",          -- DBM ExprFlagPickUp   (Unused → verify fires)
-    returned = "The (%w+) Flag was returned to its base by (.+)!",-- DBM ExprFlagReturn  (Unused → verify fires)
-    captured = "(.+) captured the (%w+) Flag!",                  -- DBM ExprFlagCaptured (named scorer)
-    -- Named drop is INFERRED symmetric — DBM only ships the generic unnamed form.
-    -- This is the one row to confirm verbatim in-game:
-    dropped  = "The (%w+) Flag was dropped by (.+)!",            -- VERIFY on Era
-    -- Nameless fallbacks (state without identity — always fire, use as backstop):
+    pickup   = "The (%w+) [Ff]lag was picked up by (.+)!",       -- CONFIRMED Era (DBM ExprFlagPickUp)
+    returned = "The (%w+) [Ff]lag was returned to its base by (.+)!",-- CONFIRMED Era (DBM ExprFlagReturn)
+    captured = "(.+) captured the (%w+) [Ff]lag!",              -- DBM ExprFlagCaptured (named scorer)
+    -- CONFIRMED in-game (2026-07-04, VERIF-5): Era emits the NAMED drop; the
+    -- generic form below never fired. Use [Ff]lag — see the casing note.
+    dropped  = "The (%w+) [Ff]lag was dropped by (.+)!",        -- CONFIRMED Era
+    -- Nameless fallbacks (state without identity — keep as backstop, but Era
+    -- didn't emit droppedGeneric in the VERIF-5 sample):
     capturedFaction = "The (%w+) ha%w+ captured the flag!",      -- "The Alliance has captured the flag!"
-    droppedGeneric  = "The flag has been dropped!",              -- DBM FlagDropped (Unused)
+    droppedGeneric  = "The flag has been dropped!",              -- DBM FlagDropped (Unused; not seen on Era)
     reset           = "The flag has been reset!",                -- DBM FlagReset  (Unused)
+    respawned       = "The flags are now placed at their bases.",-- CONFIRMED Era post-capture respawn line
 }
+-- ⚠ CASING (VERIF-5): Era mixes case by faction — "The Alliance **F**lag was
+-- dropped…" but "The Horde **f**lag was dropped…". Match [Ff]lag on EVERY row,
+-- not just some. Names arrive realm-qualified + UTF-8 ("Cheèch-Mankrik"); (.+)
+-- captures them intact.
 -- flag name → the carrier's confirming aura (locale-independent, F4)
 local FLAG_AURA = { Alliance = 23335 --[[Silverwing]], Horde = 23333 --[[Warsong]] }
 ```
@@ -193,14 +199,18 @@ NodeStateProvider:
 
 ## Action Items — remaining in-game checks (Richard, an Era WSG match)
 
-Only two yes/no items are left; the pattern table (F8) is otherwise sourced.
-Best done via the recorder ([VERIF-5]) rather than by hand — arm it in WSG and
-it logs the verbatim `CHAT_MSG_BG_SYSTEM_*` lines, so no screenshotting.
+One yes/no item is left; the pattern table (F8) is otherwise sourced + now
+in-game confirmed. Best done via the recorder ([VERIF-5]) rather than by hand —
+arm it in WSG and it logs the verbatim `CHAT_MSG_BG_SYSTEM_*` lines, so no
+screenshotting.
 
-- [ ] **Named-drop confirmation:** does Era emit `"The <faction> Flag was dropped
-      by <name>!"` (the F8 `dropped` row), or only the generic `"The flag has
-      been dropped!"`? If only generic, the FC state machine sets the flag to
-      `dropped` with `carrier = last known` (name persists from the pickup event).
+- [x] **Named-drop confirmation** — RESOLVED 2026-07-04 (VERIF-5, 43-message Era
+      WSG sample). Era emits the NAMED drop: `"The Horde flag was dropped by
+      Flatticus!"` — the generic `"The flag has been dropped!"` never appeared.
+      Faction casing splits ("Alliance Flag" / "Horde flag"), names are
+      realm-qualified + UTF-8. The FlagState `[Ff]lag` patterns handle all of it.
+      Also seen: `"The flags are now placed at their bases."` (post-capture
+      respawn) — added as the `respawned` row.
 - [ ] **Aura API flavour:** on a targeted/mouseover FC, confirm `C_UnitAuras`
       vs `UnitAura` on current Era:
       `/dump C_UnitAuras and C_UnitAuras.GetAuraDataByIndex and "C_UnitAuras" or "UnitAura"`

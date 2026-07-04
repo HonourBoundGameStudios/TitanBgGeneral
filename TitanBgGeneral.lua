@@ -736,7 +736,64 @@ do
         end
     end
 
-    local function OnEvent(_, event)
+    -- VERIF-5: WSG flag-event capture. Records every BG system message verbatim
+    -- (+ timestamp) so the exact string form Era emits is banked for the FlagState
+    -- pattern table. Resolved in-game 2026-07-04: a carried-flag DROP always NAMES
+    -- the player ("The Horde flag was dropped by <name>!") — the generic "The flag
+    -- has been dropped!" never appears on Era. Faction casing splits ("Alliance
+    -- Flag" vs "Horde flag"), which the FlagState [Ff]lag patterns already handle.
+    -- WSG only; inert when the recorder is off.
+    local function CaptureBgSystemMessage(msg)
+        if not Analytics.IsEnabled() then return end
+        if GetActiveBg() ~= "WSG" then return end
+        if type(msg) ~= "string" or msg == "" then return end
+        Analytics.Record("wsg_system_msg", { msg = msg, t = GetTime() })
+        Analytics.Emit(("wsgmsg %s"):format(msg))
+    end
+
+    -- VERIF-5: on targeting a flag carrier, scan the target's helpful auras for
+    -- the flag auras (Silverwing 23335 / Warsong 23333) and log the carrier name +
+    -- spellID + which aura API actually returned it (C_UnitAuras vs UnitAura) — the
+    -- second open flavour question. Only carriers are logged (a matched flag aura),
+    -- so this stays quiet despite PLAYER_TARGET_CHANGED firing often; a per-target
+    -- dedupe suppresses repeat records while the same carrier stays targeted.
+    local WSG_FLAG_AURA = { [23335] = "Alliance", [23333] = "Horde" }
+    local lastAuraKey
+    local function ScanFlagAura(unit)
+        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+            for i = 1, 40 do
+                local a = C_UnitAuras.GetAuraDataByIndex(unit, i, "HELPFUL")
+                if not a then break end
+                if WSG_FLAG_AURA[a.spellId] then return "C_UnitAuras", a.spellId, a.name end
+            end
+        elseif UnitAura then
+            for i = 1, 40 do
+                local name, _, _, _, _, _, _, _, _, spellId = UnitAura(unit, i, "HELPFUL")
+                if not name then break end
+                if WSG_FLAG_AURA[spellId] then return "UnitAura", spellId, name end
+            end
+        end
+        return nil
+    end
+    local function CaptureCarrierAura()
+        if not Analytics.IsEnabled() then return end
+        if GetActiveBg() ~= "WSG" then return end
+        if not UnitExists("target") then lastAuraKey = nil; return end
+        local api, spellId, auraName = ScanFlagAura("target")
+        if not api then lastAuraKey = nil; return end
+        local name = UnitName("target")
+        local key = (name or "?") .. ":" .. spellId
+        if key == lastAuraKey then return end -- same carrier still targeted
+        lastAuraKey = key
+        Analytics.Record("wsg_carrier_aura", {
+            name = name, spellId = spellId, auraName = auraName,
+            flag = WSG_FLAG_AURA[spellId], api = api,
+        })
+        Analytics.Emit(("wsgaura %s aura=%d(%s) via=%s"):format(
+            tostring(name), spellId, tostring(auraName), api))
+    end
+
+    local function OnEvent(_, event, arg1)
         if event == "UPDATE_BATTLEFIELD_SCORE" then
             if not (GetNumBattlefieldScores and GetNumBattlefieldScores() >= 1) then return end
             if not scoreboardCaptured and Analytics.IsEnabled() then
@@ -748,6 +805,12 @@ do
             CleuEvent()
         elseif event == "AREA_POIS_UPDATED" then
             CapturePOIs()
+        elseif event == "CHAT_MSG_BG_SYSTEM_ALLIANCE"
+            or event == "CHAT_MSG_BG_SYSTEM_HORDE"
+            or event == "CHAT_MSG_BG_SYSTEM_NEUTRAL" then
+            CaptureBgSystemMessage(arg1)
+        elseif event == "PLAYER_TARGET_CHANGED" then
+            CaptureCarrierAura()
         end
     end
 
@@ -798,6 +861,11 @@ do
         frame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
         frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
         frame:RegisterEvent("AREA_POIS_UPDATED")
+        frame:RegisterEvent("CHAT_MSG_BG_SYSTEM_ALLIANCE") -- VERIF-5 WSG capture
+        frame:RegisterEvent("CHAT_MSG_BG_SYSTEM_HORDE")
+        frame:RegisterEvent("CHAT_MSG_BG_SYSTEM_NEUTRAL")
+        frame:RegisterEvent("PLAYER_TARGET_CHANGED")
+        lastAuraKey = nil
         CaptureZone(false)
         C_Timer.After(3, function() if active then CaptureZone(true) end end)
         CapturePOIs() -- baseline now; AREA_POIS_UPDATED may have fired pre-arm
@@ -839,6 +907,10 @@ do
             frame:UnregisterEvent("UPDATE_BATTLEFIELD_SCORE")
             frame:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
             frame:UnregisterEvent("AREA_POIS_UPDATED")
+            frame:UnregisterEvent("CHAT_MSG_BG_SYSTEM_ALLIANCE")
+            frame:UnregisterEvent("CHAT_MSG_BG_SYSTEM_HORDE")
+            frame:UnregisterEvent("CHAT_MSG_BG_SYSTEM_NEUTRAL")
+            frame:UnregisterEvent("PLAYER_TARGET_CHANGED")
         end
         if snapshotTicker then snapshotTicker:Cancel(); snapshotTicker = nil end
         CaptureThreat() -- final snapshot before the marker drops
@@ -890,6 +962,7 @@ do
         { key = "score", label = "SCORE", tip = "Scoreboard roster captured — full player list with classToken + faction. Open the scoreboard in-BG to populate (VERIF-3 / CMD-8)." },
         { key = "cleu",  label = "CLEU",  tip = "Combat-log threat captured — real damage/healing of nearby enemies; healers self-flag via heal events (CMD-8)." },
         { key = "poi",   label = "POI",   tip = "AB node POIs captured — areaPoiID + textureIndex snapshots that decode base owner / assault state. AB only (VERIF-4)." },
+        { key = "wsg",   label = "WSG",   tip = "WSG flag events captured — raw BG system messages + flag-carrier aura scans (name/spellID/API). WSG only (VERIF-5)." },
     }
 
     local function TotalEntries()
@@ -913,6 +986,7 @@ do
             score = has("scoreboard_roster") or has("scoreboard_shape"),
             cleu  = has("cleu_threat"),
             poi   = has("ab_poi"),
+            wsg   = has("wsg_system_msg") or has("wsg_carrier_aura"),
         }
     end
 
