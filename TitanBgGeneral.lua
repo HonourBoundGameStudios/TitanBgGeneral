@@ -1203,6 +1203,14 @@ do
         }
     end
 
+    -- A live unit token for the current EFC ("efc") or FFC ("ffc"), when one is
+    -- visible (target/mouseover/nameplate) — used by CMD-3 to raid-mark the carrier.
+    function FlagState.CarrierUnit(which)
+        local v = FlagState.GetView()
+        local name = (which == "ffc") and v.ffc.name or v.efc.name
+        return name and UnitForName(name) or nil
+    end
+
     function FlagState.Start()
         if GetActiveBg() ~= "WSG" then return end
         if not frame then frame = CreateFrame("Frame"); frame:SetScript("OnEvent", function(_, _, msg) HandleMessage(msg) end) end
@@ -2077,6 +2085,39 @@ do
         SendChatMessage("Plan >> " .. table.concat(parts, " // "), GetChatType())
     end
 
+    -- CMD-3: raid markers. Marking needs raid lead/assist (party/BG is usually
+    -- fine); SetRaidTarget silently no-ops otherwise, so warn once if we can tell.
+    local function CanMark()
+        if IsInRaid() and not (UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")) then
+            print("|cffeda55fBG General|r You need raid lead or assist to place markers.")
+            return false
+        end
+        return true
+    end
+
+    function PlanBoard.MarkTarget(i)
+        if not UnitExists("target") then
+            print("|cffeda55fBG General|r No target to mark.")
+            return
+        end
+        if not CanMark() then return end
+        SetRaidTarget("target", i) -- 0 clears
+    end
+
+    function PlanBoard.MarkEFC()
+        if GetActiveBg() ~= "WSG" then
+            print("|cffeda55fBG General|r Skull-EFC is WSG-only (marks the enemy flag carrier).")
+            return
+        end
+        local unit = FlagState.CarrierUnit and FlagState.CarrierUnit("efc")
+        if not unit then
+            print("|cffeda55fBG General|r EFC not visible — target or get near them, then try again.")
+            return
+        end
+        if not CanMark() then return end
+        SetRaidTarget(unit, 8) -- skull
+    end
+
     function PlanBoard.Hide()
         if frame then frame:Hide() end
     end
@@ -2181,6 +2222,46 @@ do
             end)
             y = y - rowH
         end
+
+        -- CMD-3: raid markers. Icon row marks your current target; the row below
+        -- clears the mark and (WSG) auto-skulls the enemy flag carrier.
+        y = y - 8
+        local mkHdr = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        mkHdr:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, y)
+        mkHdr:SetText("|cffeda55fMarkers|r  |cff808080(mark your target)|r")
+        y = y - 16
+        local icons, isize = 8, 22
+        local igap = (W - pad * 2 - icons * isize) / (icons - 1)
+        for idx = 1, icons do
+            local mb = CreateFrame("Button", nil, frame)
+            mb:SetSize(isize, isize)
+            mb:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + (idx - 1) * (isize + igap), y)
+            local tex = mb:CreateTexture(nil, "ARTWORK")
+            tex:SetAllPoints()
+            tex:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. idx)
+            mb:SetScript("OnClick", function() PlanBoard.MarkTarget(idx) end)
+            mb:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                GameTooltip:SetText("Mark target with " .. (_G["RAID_TARGET_" .. idx] or ("icon " .. idx)))
+                GameTooltip:Show()
+            end)
+            mb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
+        y = y - isize - 4
+        local mkBtns = {
+            { text = "Unmark target", on = function() PlanBoard.MarkTarget(0) end },
+            { text = "Skull EFC",     on = function() PlanBoard.MarkEFC() end },
+        }
+        local mgap = 4
+        local mbw = math.floor((W - pad * 2 - (#mkBtns - 1) * mgap) / #mkBtns)
+        for i, b in ipairs(mkBtns) do
+            local btn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+            btn:SetSize(mbw, 20)
+            btn:SetPoint("TOPLEFT", frame, "TOPLEFT", pad + (i - 1) * (mbw + mgap), y)
+            btn:SetText(b.text)
+            btn:SetScript("OnClick", b.on)
+        end
+        y = y - 20
 
         y = y - 6
         -- Action row: Broadcast / Clear / Refresh / Close.
