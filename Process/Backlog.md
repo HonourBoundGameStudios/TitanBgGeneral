@@ -112,6 +112,17 @@ moved to Epic 1.5 on 2026-06-10, IDs kept.)
 - [ ] **[CMD-3] Raid-marker integration** — mark FCs/targets when leader/assist
 - [ ] **[CMD-4] Custom callout editor** — per-cell message editing persisted in SavedVariables
 
+## Epic 6 — Persistent Enemy Intel (2026-07-03)
+
+Extends the CMD-9 nemesis DB into a real cross-match **dossier**: remember each
+enemy's *role* (not just peak damage) so the addon knows what to do to them by
+name, accumulate it without loss, and brief the team from memory before the
+gates open. Vision captured 2026-07-03 from a WSG post-match review.
+
+- [x] **[INTEL-1] Enemy dossier — remember role, not just damage** (2026-07-04) — `Nemesis.Record` now persists the role signal (`healOthers` + `magicDamage`/`physDamage` peaks) alongside peak dmg/heal/met/last; `Nemesis.Lookup(name)` returns a CLEU-shaped remembered record (nil when never banked, and nil-passthrough on the role fields so legacy pre-INTEL-1 records fall to `ResolveRole`'s healing-dominance branch instead of misreading a healer as MELEE). `ResolveRole` forward-declared so the dossier classifies with the *same* logic the live panel uses (one source of truth). `GetEnemyIntel` falls back to `Lookup` when there's no live combat record, so role + engage/CC advice show **on sight** from the name alone (damage columns stay live-only). `IsNemesis` broadened: skull for peak dmg ≥ 15k **or** ally-healing ≥ 10k (healers were invisible to the damage-only gate). **GREEN 2026-07-04:** fresh multi-match dossier read from SavedVariables — healers (Infamous priest ho 11.7k, Necio resto shaman) tagged HEAL; **shadow priest Negradamus (37k dmg / 5.7k heal, ho 1.6k) correctly CASTER not HEAL** (the "any heal = healer" trap dodged on live data); casters/melee split by school. `/bganalytics nemesis` prints the role + healOthers per record.
+- [ ] **[INTEL-2] Never lose their fights — continuous banking** — the dossier is banked only in `Recorder.Stop` (leaving the BG), so a mid-match `/reload` or disconnect loses the whole match's accumulation. **RED (observed 2026-07-03):** reloaded mid-WSG → `TitanBgGeneralSaved.nemeses` still `{}` despite a full match tracked. Fix: bank into the permanent DB on the existing 5s snapshot tick — idempotent merge (`math.max` peaks; count `met` **once per match, not once per tick**) — so the record survives reload/DC and only the final numbers differ.
+- [ ] **[INTEL-3] Pre-match briefing from memory** — at BG entry / before the gates, scan the enemy roster for names in the dossier and post a short briefing to team chat (`GetChatType`) of the **remembered** threats only — role + tier, e.g. `"Intel: Philjackson (healer - CC on sight), Apomyius (mage, wrecked us last game)"`. Memory-only (no live combat data — the match hasn't started); silent when nobody present is known. Reads `Nemesis.Lookup` (needs INTEL-1); robustness rides on INTEL-2. Mind the CMD-9 name-format caveat (`Name-Realm` vs stored key) and chat-escape safety (no raw `|`, per the CMD-6 bug).
+
 ## Epic 5 — Release Quality
 
 - [ ] **[REL-1] Options panel** — Titan right-click → settings (auto-open, channel override, sounds)
@@ -123,3 +134,4 @@ moved to Epic 1.5 on 2026-06-10, IDs kept.)
 
 - Eye of the Storm / Twin Peaks / Deepwind Gorge support (retail)
 - Voice (TTS) callout playback for the leader
+- **10v10 team-strategy advisor** (to discuss 2026-07-03) — read the whole enemy *and* friendly comp (both 10-player rosters), evaluate the team-level matchup, and suggest the best strat for it (opener split, who to focus, defend/offense balance). Team-composition scale, above the per-enemy `MATCHUP` 1v1 advice we already ship. Design conversation pending with the Admiral.

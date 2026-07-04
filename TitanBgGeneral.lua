@@ -459,6 +459,12 @@ do
     end
 end
 
+-- ResolveRole (defined with the live intel far below) is forward-declared here so
+-- the Nemesis dossier can classify a STORED record's role from the very same
+-- behaviour logic the live panel uses — one source of truth, no duplicated
+-- heuristic. Assigned (not re-localised) at its definition site.
+local ResolveRole
+
 -- ******************************** Nemesis DB (CMD-9) *******************************
 -- Permanent cross-match record of the deadliest opponents, under
 -- TitanBgGeneralSaved.nemeses (survives logout — distinct from the per-match
@@ -467,8 +473,9 @@ end
 -- before this match's combat data builds.
 local Nemesis = {}
 do
-    local NEMESIS_DMG = 15000 -- peak damage in a match that earns a standing skull
-    local MAX_ENTRIES = 300   -- cap; prune least-recently-seen beyond this
+    local NEMESIS_DMG  = 15000 -- peak damage in a match that earns a standing skull
+    local NEMESIS_HEAL = 10000 -- peak ally-healing (healOthers) that earns a healer skull (INTEL-1); calibrated on live data 2026-07-04 (a non-healer never reaches 10k ally-healing)
+    local MAX_ENTRIES  = 300   -- cap; prune least-recently-seen beyond this
     local function store()
         local s = TitanBgGeneralSaved.nemeses
         if type(s) ~= "table" then s = {}; TitanBgGeneralSaved.nemeses = s end
@@ -485,6 +492,11 @@ do
                 rec.class = e.classToken or rec.class
                 rec.dmg   = math.max(rec.dmg or 0, e.damage or 0)
                 rec.heal  = math.max(rec.heal or 0, e.healing or 0)
+                -- INTEL-1: keep the role signal (peaks per channel) so ResolveRole
+                -- can recover healer/caster/melee from the stored record later.
+                rec.healOthers  = math.max(rec.healOthers or 0, e.healOthers or 0)
+                rec.magicDamage = math.max(rec.magicDamage or 0, e.magicDamage or 0)
+                rec.physDamage  = math.max(rec.physDamage or 0, e.physDamage or 0)
                 rec.met   = (rec.met or 0) + 1
                 rec.last  = now
                 db[name]  = rec
@@ -502,7 +514,32 @@ do
 
     function Nemesis.IsNemesis(name)
         local rec = name and store()[name]
-        return rec ~= nil and (rec.dmg or 0) >= NEMESIS_DMG
+        -- Deadly by damage OR by healing: a strong healer is a priority target
+        -- too, and the damage-only gate used to forget them entirely (INTEL-1).
+        return rec ~= nil and ((rec.dmg or 0) >= NEMESIS_DMG or (rec.healOthers or 0) >= NEMESIS_HEAL)
+    end
+
+    -- INTEL-1: the remembered dossier for a name, shaped like a live CLEU record
+    -- so callers can run ResolveRole on it (role recall on sight) and read the
+    -- accumulated peaks. nil when the name was never banked.
+    function Nemesis.Lookup(name)
+        local rec = name and store()[name]
+        if not rec then return nil end
+        return {
+            name        = name,
+            classToken  = rec.class,
+            damage      = rec.dmg or 0,
+            healing     = rec.heal or 0,
+            -- Pass the role signal through as-is: nil (not 0) when a legacy record
+            -- was banked before INTEL-1. ResolveRole keys "do I have school data?"
+            -- off physDamage/magicDamage being non-nil; defaulting them to 0 here
+            -- would force its new-record path and misread a healer as MELEE.
+            healOthers  = rec.healOthers,
+            magicDamage = rec.magicDamage,
+            physDamage  = rec.physDamage,
+            met         = rec.met or 0,
+            last        = rec.last,
+        }
     end
 
     function Nemesis.Clear() TitanBgGeneralSaved.nemeses = {}; print("|cffeda55fBG General|r nemesis DB cleared") end
@@ -514,8 +551,11 @@ do
         print(("|cffeda55fBG General|r nemeses: %d tracked (top by peak damage):"):format(#arr))
         for i = 1, math.min(15, #arr) do
             local r = arr[i]
-            print(("  %s  dmg %d  heal %d  met %d"):format(
-                r.name:match("^[^-]+") or r.name, r.v.dmg or 0, r.v.heal or 0, r.v.met or 0))
+            -- Classify the stored record with the same logic the live panel uses.
+            local role = ResolveRole and (ResolveRole(Nemesis.Lookup(r.name), r.v.class)) or "?"
+            print(("  %s  [%s]  dmg %d  heal %d  ho %d  met %d"):format(
+                r.name:match("^[^-]+") or r.name, role,
+                r.v.dmg or 0, r.v.heal or 0, r.v.healOthers or 0, r.v.met or 0))
         end
         if #arr == 0 then print("  (none yet)") end
     end
@@ -1390,7 +1430,7 @@ end
 --   CASTER/MELEE — by which damage school dominates, once they've dealt damage
 --   heal? — healer-capable class with no combat evidence yet (class prior)
 --   DPS   — non-healer class, no evidence yet
-local function ResolveRole(t, classToken)
+function ResolveRole(t, classToken)
     local dmg = (t and t.damage) or 0
     if t and (t.physDamage ~= nil or t.magicDamage ~= nil) then
         -- New record: full behaviour data (ally-heal + magic/phys split).
@@ -1432,20 +1472,26 @@ local function GetEnemyIntel()
             local name, kb, _, deaths, _, faction = GetBattlefieldScore(i)
             local classToken = select(10, GetBattlefieldScore(i))
             if name and faction and faction ~= myFaction then
-                local t = threat[name]
+                -- Live combat record if we've fought them this match; otherwise
+                -- fall back to the remembered dossier so role + advice show ON
+                -- SIGHT from the name alone (INTEL-1). Damage/healing columns stay
+                -- live-only (0 until they act this match) — memory drives the role.
+                local live = threat[name]
+                local t = live or Nemesis.Lookup(name)
                 local role, healer, confirmed = ResolveRole(t, classToken)
                 list[#list + 1] = {
                     name        = name,
                     classToken  = classToken,
                     kb          = kb or 0,
                     deaths      = deaths or 0,
-                    damage      = (t and t.damage) or 0,
-                    healing     = (t and t.healing) or 0,
+                    damage      = (live and live.damage) or 0,
+                    healing     = (live and live.healing) or 0,
                     role        = role,
                     healer      = healer,
                     confirmed   = confirmed,
+                    remembered  = (not live) and t ~= nil or nil, -- role came from memory, not this match
                     advice      = EngageAdvice(classToken, confirmed),
-                    nemesis     = Nemesis.IsNemesis(name), -- known heavy hitter → skull on sight
+                    nemesis     = Nemesis.IsNemesis(name), -- known heavy hitter / healer → skull on sight
                 }
             end
         end
