@@ -2427,6 +2427,54 @@ end
 SLASH_TITANBGGENERALPLAN1 = "/bgplan"
 SlashCmdList["TITANBGGENERALPLAN"] = function() PlanBoard.Toggle() end
 
+-- ******************************** Sound alerts (REL-2) *******************************
+-- Optional audio cues on the critical advisor events, gated by the REL-1 "Sound
+-- alerts" toggle (opt-in). Runs on its own 1s ticker (independent of the window)
+-- so a cue fires even with the panel closed. Edge-detected — a cue plays once on
+-- the transition, not every tick. Cues: an enemy assaulting an AB base (matches
+-- the AB-5 DEFEND priority), our WSG flag getting taken, and the EFC dropping low.
+local Alerts = {}
+do
+    local ticker, prev = nil, {}
+    local CUE = {
+        urgent = (SOUNDKIT and SOUNDKIT.RAID_WARNING) or 8959,
+        flag   = (SOUNDKIT and SOUNDKIT.READY_CHECK) or 8960,
+    }
+    local function play(id) if AreSoundsEnabled() then PlaySound(id, "Master") end end
+
+    local function Check()
+        if not AreSoundsEnabled() then return end
+        local bg = GetActiveBg()
+        if bg == "AB" then
+            local theirs = (UnitFactionGroup("player") == "Alliance") and "H" or "A"
+            local underAttack = false
+            for _, s in pairs(GetAbNodeStates()) do
+                if s.contested and s.owner == theirs then underAttack = true; break end
+            end
+            if underAttack and not prev.abAttack then play(CUE.urgent) end
+            prev.abAttack = underAttack
+        elseif bg == "WSG" then
+            local v = FlagState.GetView()
+            local taken = v.efc.name ~= nil and v.efc.state == "carried"
+            if taken and not prev.efcTaken then play(CUE.flag) end
+            prev.efcTaken = taken
+            local low = v.efc.health ~= nil and v.efc.health <= 35
+            if low and not prev.efcLow then play(CUE.urgent) end
+            prev.efcLow = low
+        end
+    end
+
+    function Alerts.Start()
+        if ticker then return end
+        wipe(prev)
+        ticker = C_Timer.NewTicker(1, Check)
+    end
+    function Alerts.Stop()
+        if ticker then ticker:Cancel(); ticker = nil end
+        wipe(prev)
+    end
+end
+
 -- ******************************** Show / Hide / Toggle BG General Screen *******************************
 -- Single merged window (was three frames): callout grid with AB/WSG/AV tabs on
 -- top, the live enemy-intel table in the middle, dev controls at the bottom.
@@ -2734,6 +2782,7 @@ autoOpenFrame:SetScript("OnEvent", function()
     -- the auto-open option (same gate the Node/Flag providers will use)
     if GetActiveBg() then
         ThreatProvider.Start()
+        Alerts.Start() -- REL-2: sound cues (self-gated on the opt-in toggle)
         -- WSG-2/3/4: flag-state provider runs only in WSG (self-gated in Start).
         if GetActiveBg() == "WSG" then FlagState.Start() else FlagState.Stop() end
         -- INTEL-3: auto pre-match briefing from memory. Delayed so the enemy
@@ -2754,6 +2803,7 @@ autoOpenFrame:SetScript("OnEvent", function()
     else
         ThreatProvider.Stop()
         FlagState.Stop()
+        Alerts.Stop()
         preBriefed = false
     end
 
