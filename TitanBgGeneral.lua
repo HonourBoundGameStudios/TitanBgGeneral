@@ -1157,6 +1157,25 @@ do
         return math.floor(UnitHealth(u) / mx * 100 + 0.5)
     end
 
+    -- WSG-4: authoritative capture scores. Prefer the client's world-state score
+    -- (fixes the under-count when we joined after some captures had happened); fall
+    -- back to our own capture-event counter. WSG world-state lists the two flag
+    -- scores as "N/3"; standard order is Alliance then Horde. If neither number
+    -- parses, the counter stands. (Order is the one WSG-4 assumption to spot-check.)
+    function FlagState.GetScores()
+        local ally, horde
+        if GetNumWorldStateUI and GetWorldStateUIInfo then
+            local nums = {}
+            for i = 1, GetNumWorldStateUI() do
+                local text = select(6, GetWorldStateUIInfo(i)) -- text field
+                local cur = type(text) == "string" and text:match("^%s*(%d+)%s*/%s*%d+")
+                if cur then nums[#nums + 1] = tonumber(cur) end
+            end
+            if #nums >= 2 then ally, horde = nums[1], nums[2] end
+        end
+        return ally or score.Alliance, horde or score.Horde
+    end
+
     -- Player-POV snapshot for the WSG UI + callouts:
     --   efc = the enemy carrying OUR flag (Enemy Flag Carrier — kill target)
     --   ffc = our ally carrying THEIR flag (Friendly Flag Carrier — escort)
@@ -1173,12 +1192,13 @@ do
         if not efcName and our.state ~= "base" then efcName = FindCarrierByAura(ourFlag) end
         local ffcName = their.carrier
         if not ffcName and their.state ~= "base" then ffcName = FindCarrierByAura(theirFlag) end
+        local ally, horde = FlagState.GetScores()
         return {
             efc     = { name = efcName,   state = our.state or "base",
                         health = efcName and FlagState.HealthPct(efcName) or nil },
             ffc     = { name = ffcName, state = their.state or "base",
                         health = ffcName and FlagState.HealthPct(ffcName) or nil },
-            score   = { ally = score.Alliance, horde = score.Horde },
+            score   = { ally = ally, horde = horde },
             respawn = respawn,
         }
     end
@@ -2097,7 +2117,7 @@ function ShowBgGeneralScreen()
     -- WSG-2 FC status line: both flag carriers by name + health, in the same band
     -- as the AB strip. Shown only on the WSG tab; live from FlagState.GetView().
     -- EFC = the enemy carrying OUR flag (kill target, red); FFC = our ally carrying
-    -- THEIR flag (escort, green). (WSG-4 later appends respawn + score here.)
+    -- THEIR flag (escort, green). WSG-4 appends the capture score + 12s flag-respawn.
     local wsgStrip = CreateFrame("Frame", nil, frame)
     wsgStrip:SetAllPoints(frame)
     local wsgStripFS = wsgStrip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -2125,7 +2145,11 @@ function ShowBgGeneralScreen()
         local v = FlagState.GetView()
         local efc = fcSegment("EFC", v.efc, HORDE_COLOR, "our flag safe")
         local ffc = fcSegment("FFC", v.ffc, ALLY_COLOR, "their flag safe")
-        wsgStripFS:SetText(efc .. "    " .. ffc)
+        -- WSG-4: capture score (caps-to-win is 3) + a live 12s flag-respawn
+        -- countdown after a capture, so endgame calls can time the reset.
+        local score = ("%s%d|r-%s%d|r"):format(ALLY_COLOR, v.score.ally or 0, HORDE_COLOR, v.score.horde or 0)
+        local respawn = v.respawn and ("  |cffffd100flag %ds|r"):format(v.respawn) or ""
+        wsgStripFS:SetText(("%s    %s    %s%s"):format(efc, ffc, score, respawn))
     end
 
     -- Grid containers (each sized to its own grid, centered in the window)
