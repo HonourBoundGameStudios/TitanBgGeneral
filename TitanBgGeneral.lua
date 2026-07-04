@@ -191,157 +191,43 @@ function GetTooltipText()
     return "Battleground General Addon\nTracks your battleground stats and performance."
 end
 
--- ******************************** ThreatProvider (CMD-6/7 skeleton) *******************************
--- Ranks enemy players from the battlefield scoreboard: healers (CC list, by
--- healingDone) and dangerous DPS (KILL list, by damageDone, killingBlows
--- tiebreak). Design: Research/enemy-threat-research.md (Recommendation).
+-- ******************************** ThreatProvider (scoreboard poller) *******************************
+-- Keeps the battlefield scoreboard fresh while in a BG so the enemy-intel table
+-- (GetEnemyIntel) and the headcount always have data — even with the Analytics
+-- recorder off (its own score poll is a dev default that gets stripped at release).
 --
--- ⚠ VERIFICATION GATE — not GREEN until the Era scoreboard /dump session
--- (Research/enemy-threat-research.md, Action Items). SCORE_POS below is
--- Details' shipped classic unpack — honor `rank` at position 7 shifts
--- everything after it vs the retail wiki shape. If the /dump disagrees,
--- fix SCORE_POS and nothing else. Until then output is debug-only
--- (/bgthreat prints locally; nothing is ever sent to chat from here).
+-- Ranking itself moved out (CMD-8): the Era scoreboard reports damageDone/
+-- healingDone as 0 (VERIF-3), so the old scoreboard-based ccList/killList that
+-- lived here were dead on Era. Real danger order now comes from the CLEU
+-- aggregate in GetEnemyIntel/IntelPanel, with killingBlows as the cold-start
+-- fallback. This module no longer ranks — it only requests score data on a ticker.
 local ThreatProvider = {}
 do
-    -- Positions in the classic GetBattlefieldScore(i) return list (UNVERIFIED on Era)
-    local SCORE_POS = {
-        name = 1, killingBlows = 2, faction = 6,
-        classToken = 10, damageDone = 11, healingDone = 12,
-    }
-
-    -- Era class prior: only these classes can heal (faction split leaves 3 per side)
-    local HEALER_CAPABLE = { PRIEST = true, DRUID = true, PALADIN = true, SHAMAN = true }
-    local H2D          = 1.5    -- healer ratio rule: healing > H2D × damage
-    local HEAL_FLOOR   = 20000  -- minimum healingDone before ranking kicks in; calibrate at the /dump session
-    local POLL_SECONDS = 10     -- Details ships 10s, BGE 2s; 10s is plenty for cumulative data
-    local TOP_N        = 2
-
-    local ticker, eventFrame
-    local ccList, killList = {}, {}
-
-    local function ReadScoreRow(i)
-        -- Branch on API presence, not flavor (retail has structured score info)
-        if C_PvP and C_PvP.GetScoreInfo then
-            local s = C_PvP.GetScoreInfo(i)
-            if not s or not s.name then return nil end
-            return {
-                name = s.name, killingBlows = s.killingBlows or 0, faction = s.faction,
-                classToken = s.classToken,
-                damageDone = s.damageDone or 0, healingDone = s.healingDone or 0,
-            }
-        end
-        local r = { GetBattlefieldScore(i) }
-        if not r[SCORE_POS.name] then return nil end
-        -- type-checked so a wrong SCORE_POS degrades the ranking, never errors
-        local token = r[SCORE_POS.classToken]
-        return {
-            name         = r[SCORE_POS.name],
-            killingBlows = tonumber(r[SCORE_POS.killingBlows]) or 0,
-            faction      = r[SCORE_POS.faction],
-            classToken   = type(token) == "string" and token or nil,
-            damageDone   = tonumber(r[SCORE_POS.damageDone]) or 0,
-            healingDone  = tonumber(r[SCORE_POS.healingDone]) or 0,
-        }
-    end
-
-    local function Rebuild()
-        wipe(ccList)
-        wipe(killList)
-        -- Scoreboard faction is numeric: 0 = Horde, 1 = Alliance (locale-independent)
-        local myFaction = (UnitFactionGroup("player") == "Horde") and 0 or 1
-
-        local healers, others = {}, {}
-        for i = 1, GetNumBattlefieldScores() do
-            local row = ReadScoreRow(i)
-            if row and row.faction ~= nil and row.faction ~= myFaction then
-                local isHealer = HEALER_CAPABLE[row.classToken or ""]
-                    and row.healingDone > H2D * row.damageDone
-                    and row.healingDone > HEAL_FLOOR
-                if isHealer then
-                    healers[#healers + 1] = row
-                else
-                    others[#others + 1] = row
-                end
-            end
-        end
-
-        table.sort(healers, function(a, b) return a.healingDone > b.healingDone end)
-        table.sort(others, function(a, b)
-            if a.damageDone ~= b.damageDone then return a.damageDone > b.damageDone end
-            return a.killingBlows > b.killingBlows
-        end)
-
-        for i = 1, math.min(TOP_N, #healers) do ccList[i] = healers[i] end
-        for i = 1, math.min(TOP_N, #others) do killList[i] = others[i] end
-
-        -- Cold start: nobody past HEAL_FLOOR yet — fall back to the class prior,
-        -- marked as a guess (copies, so the same row can rank in KILL unmarked)
-        if #ccList == 0 then
-            for _, row in ipairs(others) do
-                if #ccList < TOP_N and HEALER_CAPABLE[row.classToken or ""] then
-                    ccList[#ccList + 1] = { name = row.name, classToken = row.classToken, likely = true }
-                end
-            end
-        end
-    end
-
-    local function FormatRow(row)
-        local shortName = row.name and row.name:match("^[^-]+") or "?" -- display only; full Name-Realm kept in the row
-        local cls = row.classToken
-            and (row.classToken:sub(1, 1) .. row.classToken:sub(2):lower()) or "?"
-        return shortName .. " (" .. cls .. (row.likely and ", likely" or "") .. ")"
-    end
-
-    -- One advisory line — CMD-6's callout button will send this via GetChatType();
-    -- until the gate clears, /bgthreat prints it locally.
-    function ThreatProvider.GetAdvisoryLine()
-        if #ccList == 0 and #killList == 0 then
-            return "no enemy scoreboard data yet (enter a BG; rankings build over the first minutes)"
-        end
-        local parts = {}
-        if #ccList > 0 then
-            local names = {}
-            for i, row in ipairs(ccList) do names[i] = FormatRow(row) end
-            parts[#parts + 1] = "CC: " .. table.concat(names, ", ")
-        end
-        if #killList > 0 then
-            local names = {}
-            for i, row in ipairs(killList) do names[i] = FormatRow(row) end
-            parts[#parts + 1] = "KILL: " .. table.concat(names, ", ")
-        end
-        return table.concat(parts, " | ")
-    end
+    local POLL_SECONDS = 10 -- Details ships 10s; plenty for cumulative scoreboard data
+    local ticker
 
     function ThreatProvider.Start()
         if ticker then return end
         -- Resolve the scoreboard-request API at call time (BG entry, long after
-        -- load). Passing this straight to NewTicker crashed when it was nil
-        -- ("bad argument #2"); resolve + guard + wrap so it can't anymore.
+        -- load): global first, C_PvP fallback, skip cleanly if absent. Passing a
+        -- nil straight to NewTicker crashed here once ("bad argument #2") — resolve,
+        -- guard, and wrap so it can't anymore.
         local RequestScores = RequestBattlefieldScoreData
             or (C_PvP and C_PvP.RequestBattlefieldScoreData)
         if not RequestScores then
             Titan_Debug.Out(ADDON_ID, "Events", "ThreatProvider: no RequestBattlefieldScoreData API on this flavor")
             return
         end
-        if not eventFrame then
-            eventFrame = CreateFrame("Frame")
-            eventFrame:SetScript("OnEvent", Rebuild)
-        end
-        eventFrame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
         ticker = C_Timer.NewTicker(POLL_SECONDS, function() RequestScores() end)
         RequestScores()
-        Titan_Debug.Out(ADDON_ID, "Events", "ThreatProvider started")
+        Titan_Debug.Out(ADDON_ID, "Events", "ThreatProvider poller started")
     end
 
     function ThreatProvider.Stop()
         if not ticker then return end
         ticker:Cancel()
         ticker = nil
-        eventFrame:UnregisterEvent("UPDATE_BATTLEFIELD_SCORE")
-        wipe(ccList)
-        wipe(killList)
-        Titan_Debug.Out(ADDON_ID, "Events", "ThreatProvider stopped")
+        Titan_Debug.Out(ADDON_ID, "Events", "ThreatProvider poller stopped")
     end
 end
 
@@ -361,7 +247,9 @@ SlashCmdList["TITANBGGENERALTHREAT"] = function(msg)
         if IntelPanel and IntelPanel.ShowBriefing then IntelPanel.ShowBriefing(true) end
         return
     end
-    print("|cffeda55fBG General|r " .. ThreatProvider.GetAdvisoryLine())
+    print("|cffeda55fBG General|r " ..
+        ((IntelPanel and IntelPanel.GetAdvisoryLine and IntelPanel.GetAdvisoryLine())
+            or "intel not ready — enter a battleground"))
 end
 
 -- ******************************** Analytics Recorder (VERIF-1 scaffold) *******************************
@@ -1680,11 +1568,13 @@ do
         return token:sub(1, 1) .. token:sub(2):lower()
     end
 
-    -- CMD-6: call the deadliest enemies to chat. KILL = top CLEU damage dealers;
-    -- CC = healers (confirmed via heal events, or class-prior, marked "?"). Sent
-    -- on the right channel via GetChatType (INSTANCE_CHAT in a BG). Plain text —
-    -- colour codes don't render for other players.
-    function IntelPanel.AnnounceThreats()
+    -- CMD-6/8: pick the deadliest enemies. KILL = top real-damage dealers from the
+    -- CLEU aggregate; CC = healers (confirmed via heal events, or class-prior "?").
+    -- Cold-start fallback (CMD-8): with no CLEU damage yet — start of match, or the
+    -- recorder off post-release — rank the KILL list by scoreboard killingBlows
+    -- (a real Era field, unlike the always-0 damageDone) so the call still names
+    -- the enemy's killers. Returns dps (enemy records, ranked) and heals (name strings).
+    local function BuildThreatLists()
         local intel = GetEnemyIntel()
         local dps, heals = {}, {}
         for _, e in ipairs(intel) do
@@ -1694,16 +1584,34 @@ do
                 dps[#dps + 1] = e
             end
         end
-        table.sort(dps, function(a, b) return a.damage > b.damage end)
-        local kill = {}
-        for i = 1, math.min(3, #dps) do
-            local e = dps[i]
-            -- {skull} is a chat raid-target token (renders as the icon, chat-safe);
-            -- crown the #1 damage dealer with it.
-            kill[i] = (i == 1 and "{skull}" or "")
-                .. (e.name:match("^[^-]+") or e.name)
-                .. " (" .. ClassLabel(e.classToken) .. " " .. ShortNum(e.damage) .. ")"
+        if #dps > 0 then
+            table.sort(dps, function(a, b) return a.damage > b.damage end)
+        else
+            for _, e in ipairs(intel) do
+                if not e.healer and (e.kb or 0) > 0 then dps[#dps + 1] = e end
+            end
+            table.sort(dps, function(a, b) return (a.kb or 0) > (b.kb or 0) end)
         end
+        return dps, heals
+    end
+
+    -- One KILL-list label. Shows real damage when we have it, else "N KB" (the
+    -- cold-start fallback metric). `crown` prefixes the chat {skull} raid token —
+    -- pass false for local prints, where the token would show as literal text.
+    local function KillLabel(e, crown)
+        local metric = (e.damage or 0) > 0 and ShortNum(e.damage) or ((e.kb or 0) .. " KB")
+        return (crown and "{skull}" or "")
+            .. (e.name:match("^[^-]+") or e.name)
+            .. " (" .. ClassLabel(e.classToken) .. " " .. metric .. ")"
+    end
+
+    -- CMD-6: call the deadliest enemies to chat, on the right channel via
+    -- GetChatType (INSTANCE_CHAT in a BG). Plain text — colour codes don't render
+    -- for other players.
+    function IntelPanel.AnnounceThreats()
+        local dps, heals = BuildThreatLists()
+        local kill = {}
+        for i = 1, math.min(3, #dps) do kill[i] = KillLabel(dps[i], i == 1) end
         local parts = {}
         if #kill > 0  then parts[#parts + 1] = "KILL: " .. table.concat(kill, ", ") end
         if #heals > 0 then parts[#parts + 1] = "CC heal: " .. table.concat(heals, ", ") end
@@ -1714,6 +1622,24 @@ do
         -- Separate groups with " // ", NOT " | " — a bare "|" is read as a chat
         -- escape code and SendChatMessage rejects it ("Invalid escape code").
         SendChatMessage("Enemy threats >> " .. table.concat(parts, " // "), GetChatType())
+    end
+
+    -- CMD-8: the bare `/bgthreat` readout — the same KILL/CC selection, printed
+    -- locally (colour ok, no {skull} chat token). Replaces the old ThreatProvider
+    -- scoreboard ranking, which was dead on Era (damage/healing always 0).
+    function IntelPanel.GetAdvisoryLine()
+        local dps, heals = BuildThreatLists()
+        if #dps == 0 and #heals == 0 then
+            return "no enemy threat data yet (fight near them; rankings build over the match)"
+        end
+        local parts = {}
+        if #dps > 0 then
+            local names = {}
+            for i = 1, math.min(3, #dps) do names[i] = KillLabel(dps[i], false) end
+            parts[#parts + 1] = "|cffff5555KILL|r: " .. table.concat(names, ", ")
+        end
+        if #heals > 0 then parts[#parts + 1] = "|cff33ffffCC|r: " .. table.concat(heals, ", ") end
+        return table.concat(parts, "   ")
     end
 
     -- INTEL-3: pre-match briefing built purely from the remembered dossier — no
