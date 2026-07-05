@@ -2161,6 +2161,108 @@ end
 SLASH_TITANBGGENERALCOMP1 = "/bgcomp"
 SlashCmdList["TITANBGGENERALCOMP"] = PrintTeamPlan
 
+-- ******************************** Match History (HIST-1) *******************************
+-- Durable record of every completed WSG/AB match — both comp signatures + the
+-- outcome + key stats — so the battle plan can become data-driven (Epic 8, HIST-2
+-- learns from this). Independent of the dev Analytics recorder: it always banks a
+-- finished match into TitanBgGeneralSaved.matchHistory (a permanent store, like
+-- the Nemesis DB — NOT the rolling Analytics.log that clears each match).
+local MatchHistory = {}
+do
+    local frame, matchStart, curBg, recorded
+
+    local function store()
+        local h = TitanBgGeneralSaved.matchHistory
+        if type(h) ~= "table" then h = {}; TitanBgGeneralSaved.matchHistory = h end
+        return h
+    end
+
+    -- Reduce a comp signature to a SavedVariables-storable shape (primitives only).
+    local function sigStore(s)
+        return {
+            counts = s.counts, healers = s.healers, confirmed = s.confirmedHealers,
+            melee = s.melee, ranged = s.ranged, caster = s.caster, size = s.size,
+            fc = s.fc[1],
+        }
+    end
+
+    -- Bank the finished match. Fires once GetBattlefieldWinner() is decided; the
+    -- `recorded` guard makes the repeated end-of-match events idempotent.
+    local function RecordOutcome()
+        if recorded then return end
+        local bg = GetActiveBg()
+        if bg ~= "WSG" and bg ~= "AB" then return end          -- v1: WSG/AB
+        local winner = GetBattlefieldWinner and GetBattlefieldWinner()
+        if winner == nil then return end                        -- not decided yet
+        recorded = true
+
+        local myFaction = (UnitFactionGroup("player") == "Horde") and 0 or 1
+        local ours, theirs = {}, {}
+        for _, m in ipairs(GroupMembers()) do ours[#ours + 1] = { classToken = m.class } end
+        for _, e in ipairs(GetEnemyIntel()) do theirs[#theirs + 1] = { classToken = e.classToken, role = e.role } end
+        local ourSig, theirSig = CompSignature(ours), CompSignature(theirs)
+        local plan = ComputeTeamPlan(ourSig, theirSig, bg)
+
+        local ally, horde
+        if bg == "WSG" and FlagState and FlagState.GetScores then ally, horde = FlagState.GetScores() end
+
+        local threat = (Recorder.GetThreat and Recorder.GetThreat()) or {}
+        local tracked, topName, topDmg, healersSeen = 0, nil, 0, 0
+        for _, t in pairs(threat) do
+            tracked = tracked + 1
+            if (t.damage or 0) > topDmg then topDmg = t.damage; topName = t.name end
+            if (t.heals or 0) > 0 then healersSeen = healersSeen + 1 end
+        end
+
+        local rec = {
+            bg = bg,
+            when = time and time() or nil,
+            durationSec = matchStart and math.floor(GetTime() - matchStart) or nil,
+            won = (winner == myFaction),
+            winner = winner, myFaction = myFaction,
+            ourScore   = (myFaction == 1) and ally or horde,   -- WSG only (nil in AB v1)
+            theirScore = (myFaction == 1) and horde or ally,
+            ours = sigStore(ourSig), theirs = sigStore(theirSig),
+            posture = plan.posture, dH = plan.dH,
+            stats = {
+                trackedEnemies = tracked,
+                topDamage = topDmg,
+                topName = topName and (topName:match("^[^-]+") or topName) or nil,
+                confirmedHealersSeen = healersSeen,
+            },
+        }
+        local h = store()
+        h[#h + 1] = rec
+        while #h > 200 do table.remove(h, 1) end               -- bound the store
+
+        print(("|cffeda55fBG General|r Match banked: %s %s%s  (plan was %s, %d recorded)"):format(
+            bg, rec.won and "|cff40ff40WON|r" or "|cffff4d4dlost|r",
+            (rec.ourScore and rec.theirScore) and ("  " .. rec.ourScore .. "-" .. rec.theirScore) or "",
+            plan.posture, #h))
+    end
+
+    local function OnEvent(_, event)
+        if event == "PLAYER_ENTERING_WORLD" then
+            local bg = GetActiveBg()
+            if bg and curBg ~= bg then          -- new match: (re)start clock, arm recording
+                curBg, matchStart, recorded = bg, GetTime(), false
+            elseif not bg then
+                curBg = nil
+            end
+        else                                     -- UPDATE_BATTLEFIELD_STATUS / _SCORE near the end
+            RecordOutcome()
+        end
+    end
+
+    frame = CreateFrame("Frame")
+    frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    frame:RegisterEvent("UPDATE_BATTLEFIELD_STATUS")
+    frame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
+    frame:SetScript("OnEvent", OnEvent)
+
+    function MatchHistory.Count() local h = TitanBgGeneralSaved.matchHistory; return (type(h) == "table") and #h or 0 end
+end
+
 -- ******************************** Live Intel overlay (dev) *******************************
 -- A large, movable dev overlay that follows the live battle in real time: base
 -- control, resources, headcount, and a danger-ranked enemy table (class-coloured,
