@@ -1994,6 +1994,12 @@ local FC_PLAN = {
     MAGE    = { escort = "+1 defense",         requiresHealer = false, note = "blink/nova carrier, squishy" },
 }
 
+-- Semantic posture colours (green = go, gold = neutral, orange = caution —
+-- deliberately NOT enemy-red, which reads as "kill target"). Shared by the
+-- /bgplan board and the main-panel headline (TEAM-3).
+local POSTURE_COLOR = { PRESS = "|cff40ff40", STANDARD = "|cffffd100", TURTLE = "|cffff8040" }
+local function PostureColor(p) return POSTURE_COLOR[p] or "|cffffffff" end
+
 local function TitleClass(c) return c and (c:sub(1, 1) .. c:sub(2):lower()) or "?" end
 
 -- Reduce a roster (list of { classToken, role? }) to a comp signature. Live role
@@ -2498,10 +2504,7 @@ do
         return "|cffffffff"
     end
 
-    -- TEAM-2: semantic posture colours (green = go, gold = neutral, orange =
-    -- caution — deliberately NOT the enemy-red, which reads as "kill target").
-    local POSTURE_COLOR = { PRESS = "|cff40ff40", STANDARD = "|cffffd100", TURTLE = "|cffff8040" }
-    local function PostureColor(p) return POSTURE_COLOR[p] or "|cffffffff" end
+    -- PostureColor() is lifted to file scope (shared with the TEAM-3 panel headline).
 
     -- Current group as { name=, class= }. Solo shows just the player.
     -- GroupMembers() is lifted to file scope (shared with the TEAM-1 comp engine).
@@ -3085,17 +3088,47 @@ function ShowBgGeneralScreen()
     local activeBg = GetActiveBg()
     selectTab((activeBg and bgContainers[activeBg]) or abContainer)
 
-    -- AB-5 advice line (AB tab; blank otherwise), between the grid and the table.
     local gridBottom = gridOffsetY - gridH
+
+    -- TEAM-3: live comp-plan headline, right on the panel that's already open in
+    -- a BG — the posture at a glance, no slash command. Click opens the full
+    -- Battle Plan board (FC / focus / split / broadcast). A leader reads this
+    -- mid-fight; they never type /bgcomp.
+    local planBtn = CreateFrame("Button", nil, frame)
+    planBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, gridBottom - 2)
+    planBtn:SetPoint("RIGHT", frame, "RIGHT", -pad, 0)
+    planBtn:SetHeight(16)
+    planBtn:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+    local planFS = planBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    planFS:SetAllPoints(planBtn)
+    planFS:SetJustifyH("CENTER"); planFS:SetWordWrap(false)
+    planBtn:SetScript("OnClick", function() PlanBoard.Toggle() end)
+    planBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Battle Plan — click for FC, focus, split & broadcast")
+        GameTooltip:Show()
+    end)
+    planBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    local function RefreshPlanLine()
+        local plan = BuildTeamPlan()
+        if plan then
+            planFS:SetText(("%sPLAN %s|r  |cffffffff%s|r"):format(
+                PostureColor(plan.posture), plan.posture, plan.line))
+        else
+            planFS:SetText("|cffeda55fBattle Plan|r  |cff808080(click to open)|r")
+        end
+    end
+
+    -- AB-5 advice line (AB tab; blank otherwise), below the plan headline.
     local adviceFS = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    adviceFS:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, gridBottom - 2)
+    adviceFS:SetPoint("TOPLEFT", frame, "TOPLEFT", pad, gridBottom - 2 - 17)
     adviceFS:SetPoint("RIGHT", frame, "RIGHT", -pad, 0)
     adviceFS:SetJustifyH("CENTER")
     local function RefreshAdvice() adviceFS:SetText(GetAbAdvice() or "") end
 
     -- Intel section (summary + enemy table + Announce) below the advice line; its
     -- summary already shows bases/resources/headcount, replacing the old footer.
-    local intelBottom = IntelPanel.Populate(frame, pad, gridBottom - 2 - 18)
+    local intelBottom = IntelPanel.Populate(frame, pad, gridBottom - 2 - 17 - 18)
 
     -- Dev section (status + LEDs + buttons) below the intel table.
     local devBottom   = DevPanel.Populate(frame, pad, intelBottom - 6)
@@ -3112,6 +3145,7 @@ function ShowBgGeneralScreen()
             RefreshAbStrip()
             RefreshWsgStrip()
             RefreshAdvice()
+            RefreshPlanLine()
         end
     end)
     IntelPanel.Refresh()
@@ -3119,6 +3153,7 @@ function ShowBgGeneralScreen()
     RefreshAbStrip()
     RefreshWsgStrip()
     RefreshAdvice()
+    RefreshPlanLine()
 
     TitanBgGeneralSaved.shown = true
     _G["BgGeneralWindow"] = frame
