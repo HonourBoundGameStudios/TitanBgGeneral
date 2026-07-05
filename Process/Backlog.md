@@ -21,7 +21,7 @@ Basin**: fast callouts today, situational awareness and smart direction next.
 
 ## Bugs
 
-- _(none open)_
+- [x] **[BUG] Opener/callout editors crash on OnShow** (`editBox` nil) — right-clicking a `/bgplan` opener preset (or an AB/WSG cell for a custom callout) errored `attempt to index field 'editBox' (a nil value)` at the StaticPopup `OnShow`. Cause: the modern **Blizzard_StaticPopup** system (current Era/Cata) dropped `dialog.editBox` in favour of `dialog:GetEditBox()`. Fixed 2026-07-04 with a version-safe `PopupEditBox()` resolver (method → field → global-name) applied to both `TITANBGGENERAL_EDIT_CALLOUT` (CMD-4) and `TITANBGGENERAL_EDIT_OPENER` (CMD-2). _(Verified outside a BG by the Admiral; re-confirm the round-trip: edit → Save → text sticks.)_
 
 ## Epic 1.6 — Auto-Verification Recorder (2026-06-13)
 
@@ -65,6 +65,16 @@ only (soft archetype/node layer held for v2).
 - [ ] **[TEAM-3] Comp plan on the always-open panel (no slash)** — a leader can't type `/bgcomp` mid-fight. Live **PLAN `<posture>` `<reason>`** headline on the main `BgGeneralWindow` (auto-opens in a BG), posture-coloured, refreshed on the 0.5s ticker; **click it to open the full Battle Plan board**. WSG/AB show the plan; else "Battle Plan (click to open)".
     - **Status (2026-07-04):** shipped + deployed. `PostureColor` lifted to file scope (shared board + panel). Headline sits above the AB advice line; advice + intel shifted down 17px. **OWED in-game:** eyeball the headline (spacing/truncation of the reason at panel width, no overlap) + `ui-ux-reviewer`; confirm click opens the board. _(Lesson recorded: features need a UI surface, not just a slash command.)_
 - v2 (deferred): soft `ENEMY_ARCHETYPE` headlines + AB node-allocation detail; leader-tunable thresholds; optional toggle.
+
+## Epic 8 — Match History & Learned Predictions (2026-07-04)
+
+Store every match (both comp signatures + outcome + stats) so the battle plan
+gets **data-driven** instead of pure heuristic — the addon that *learns which
+plans actually win*. The market gap `addon-market-gap-research.md` calls empty.
+
+- [ ] **[HIST-1] Match-history recorder** — on match end (`GetBattlefieldWinner()` non-nil), append one durable record to `TitanBgGeneralSaved.matchHistory`: bg, timestamp, duration, **won?** + winner + score, **ourSig + theirSig** (comp signatures via `CompSignature`), the posture we'd have advised, and aggregate stats (tracked enemies, top damage, confirmed healers) from `Recorder.GetThreat()`. Bounded (last ~200). Reuses the shipped readers + engine; separate durable store (not the rolling `Analytics.log`). **In-game gate:** confirm `GetBattlefieldWinner()` returns 0/1 on Era at match end.
+- [ ] **[HIST-2] Learned prediction** — feed `matchHistory` into `ComputeTeamPlan`: for the current comp matchup, weight/adjust posture + show empirical win-rate + a real confidence from past similar comps. **Statistical models are in-scope (Admiral 2026-07-04):** e.g. logistic regression on comp-diff features (ΔH, melee diff, FC edge) → win probability, or kNN on the comp signature / healer-diff bucket; Bayesian smoothing for small samples so early advice isn't overconfident. Needs accrued data + design.
+- [ ] **[HIST-3] History & insights UI** — a viewable surface (win-rate by posture / by ΔH bucket / recent matches), reachable from the panel — **UI, not a slash command** (see `feedback-features-need-ui`).
 
 ## Parked / Ideas
 

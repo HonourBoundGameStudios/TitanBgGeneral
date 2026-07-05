@@ -1457,6 +1457,22 @@ local function SetCalloutOverride(key, text)
     if type(s) ~= "table" then s = {}; TitanBgGeneralSaved.customCallouts = s end
     s[key] = (text and text:gsub("%s", "") ~= "") and text or nil
 end
+-- StaticPopup edit-box resolver. The modern Blizzard_StaticPopup system (Cata
+-- Classic / current Era) no longer sets `dialog.editBox`; the edit box is fetched
+-- via `dialog:GetEditBox()`. Older builds still expose `dialog.editBox`. Resolve
+-- defensively (method → field → global name) so the callout/opener editors work
+-- on every flavor instead of erroring on OnShow ("index editBox, a nil value").
+local function PopupEditBox(dialog)
+    if not dialog then return nil end
+    if dialog.GetEditBox then
+        local ok, e = pcall(dialog.GetEditBox, dialog)
+        if ok and e then return e end
+    end
+    if dialog.editBox then return dialog.editBox end
+    local name = dialog.GetName and dialog:GetName()
+    return name and _G[name .. "EditBox"] or nil
+end
+
 StaticPopupDialogs["TITANBGGENERAL_EDIT_CALLOUT"] = {
     text = "Custom callout (blank = default):",
     button1 = SAVE or "Save",
@@ -1464,11 +1480,14 @@ StaticPopupDialogs["TITANBGGENERAL_EDIT_CALLOUT"] = {
     hasEditBox = true,
     maxLetters = 240,
     OnShow = function(self, data)
-        self.editBox:SetText((data and (GetCalloutOverride(data.key) or data.default)) or "")
-        self.editBox:HighlightText()
+        local eb = PopupEditBox(self)
+        if not eb then return end
+        eb:SetText((data and (GetCalloutOverride(data.key) or data.default)) or "")
+        eb:HighlightText()
     end,
     OnAccept = function(self, data)
-        if data then SetCalloutOverride(data.key, self.editBox:GetText()) end
+        local eb = PopupEditBox(self)
+        if data and eb then SetCalloutOverride(data.key, eb:GetText()) end
     end,
     EditBoxOnEnterPressed = function(self) self:GetParent().button1:Click() end,
     EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
@@ -2805,12 +2824,16 @@ do
         hasEditBox = true,
         maxLetters = 240,
         OnShow = function(self, data)
+            local eb = PopupEditBox(self)
             local list = data and TitanBgGeneralSaved.openers and TitanBgGeneralSaved.openers[data.bg]
-            self.editBox:SetText((list and list[data.idx]) or "")
-            self.editBox:HighlightText()
+            if eb then
+                eb:SetText((list and list[data.idx]) or "")
+                eb:HighlightText()
+            end
         end,
         OnAccept = function(self, data)
-            local text = self.editBox:GetText()
+            local eb = PopupEditBox(self)
+            local text = eb and eb:GetText()
             local list = data and TitanBgGeneralSaved.openers and TitanBgGeneralSaved.openers[data.bg]
             if list and text and text:gsub("%s", "") ~= "" then list[data.idx] = text end
             Build()
