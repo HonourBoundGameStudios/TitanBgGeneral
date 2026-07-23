@@ -126,7 +126,9 @@ local function GetActiveBg()
 end
 
 -- ******************************** PrepareBgGeneralMenu *******************************
----local Build the right-click dropdown menu (UIDropDownMenu scheme)
+---local Build the right-click dropdown menu -- OLD UIDropDownMenu scheme.
+--- Kept only as a fallback for Titan builds predating the Jan 2026 menu rewrite;
+--- on current Titan the menuContextFunction below (GeneratorFunction) wins.
 local function PrepareBgGeneralMenu()
     TitanPanelRightClickMenu_AddTitle(TitanPlugins[ADDON_ID].menuText)
 
@@ -171,6 +173,38 @@ local function PrepareBgGeneralMenu()
     TitanPanelRightClickMenu_AddHide(ADDON_ID, level)
 end
 
+-- ******************************** GeneratorFunction *******************************
+-- Right-click menu -- NEW scheme (Jan 2026). Blizzard rewrote the Menu API and
+-- is removing the old UIDropDownMenu code, so Titan wraps Blizzard_Menu behind
+-- Titan_Menu and calls this generator on right-click. Titan itself adds the menu
+-- title (top) plus the ShowIcon / DisplayOnRightSide toggles and Hide (bottom)
+-- from the registry's controlVariables, so we only supply this plugin's own
+-- options. These read/write the addon's own TitanBgGeneralSaved table (not Titan
+-- vars), so they use the generic checkbox/radio helpers with explicit get/set
+-- closures rather than Titan_Menu.AddSelector (which is bound to TitanGetVar).
+---@param owner table Plugin frame
+---@param root table Menu context root
+local function GeneratorFunction(owner, root)
+    Titan_Menu.AddSelectorGeneric(root, "Auto-open in battlegrounds",
+        function() return IsAutoOpenEnabled() end,
+        function() TitanBgGeneralSaved.autoOpen = not IsAutoOpenEnabled() end)
+
+    Titan_Menu.AddSelectorGeneric(root, "Sound alerts",
+        function() return AreSoundsEnabled() end,
+        function() TitanBgGeneralSaved.sounds = not AreSoundsEnabled() end)
+
+    -- REL-1: callout channel override (radio group backed by TitanBgGeneralSaved).
+    -- CreateRadio is the native menu-description method Titan's own radio helpers
+    -- wrap; used directly here since our state isn't a Titan var.
+    Titan_Menu.AddSpacer(root)
+    Titan_Menu.AddText(root, "Callout channel")
+    for _, ch in ipairs(CHANNEL_CHOICES) do
+        root:CreateRadio(ch.label,
+            function() return GetChannelOverride() == ch.key end,
+            function() TitanBgGeneralSaved.channelOverride = ch.key end)
+    end
+end
+
 -- ******************************** GetButtonText *******************************
 -- Titan bar text: the active BG while inside one (e.g. "AB"), empty otherwise
 -- so the bar stays icon-only out in the world. Label is hidden unless the
@@ -191,7 +225,8 @@ local function OnLoad(self)
         category = "Combat",
         version = VERSION,
         menuText = "Battleground General",
-        menuTextFunction = PrepareBgGeneralMenu,
+        menuContextFunction = GeneratorFunction,   -- NEW scheme (1st priority, Jan 2026)
+        menuTextFunction = PrepareBgGeneralMenu,    -- OLD scheme fallback (pre-2026 Titan)
         tooltipTitle = "Battleground General",
         tooltipTextFunction = GetTooltipText,
         buttonTextFunction = GetButtonText,
